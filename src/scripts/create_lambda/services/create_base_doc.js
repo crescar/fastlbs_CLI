@@ -1,0 +1,173 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+function toDocConstName(lambdaName) {
+    const pascalName = lambdaName
+        .split(/[^a-zA-Z0-9]+/)
+        .filter(Boolean)
+        .map((part) => part[0].toUpperCase() + part.slice(1))
+        .join('');
+
+    return `${pascalName || lambdaName}Doc`;
+}
+
+function generateDocContent(lambdaName, lambdaPath, method) {
+    const docsDir = path.join(process.cwd(), 'lambdas/__doc__/src/documents/lambdas');
+    const docConstName = toDocConstName(lambdaName);
+    if (!lambdaPath.startsWith('/')) {
+        lambdaPath = '/' + lambdaPath;
+    }
+    const content = `
+export const ${docConstName} = {
+    "${lambdaPath}": {
+        "${method.toLowerCase()}": {
+            "summary": "Basic ${lambdaName} Lambda function",
+            "description": "This is a basic Lambda function created for ${lambdaName}.",
+            "tags": ["${lambdaName.toUpperCase()}"],
+            "responses": {
+                "200": {
+                    "description": "Successful response",
+                    "content": {
+                        "application/json": {
+                            "example": {
+                                "status": "success",
+                                "message": "Request successful",
+                                "data": {
+                                    "greeting": "Hello, World! from lambda ${lambdaName}"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}     
+`
+    fs.mkdirSync(docsDir, { recursive: true });
+    const docPath = path.join(docsDir, `${lambdaName}.ts`);
+    fs.writeFileSync(docPath, content, 'utf-8');
+}
+
+function findMatchingBrace(content, openBraceIndex) {
+    let depth = 0;
+    let inString = false;
+    let stringDelimiter = '';
+    let escaped = false;
+
+    for (let i = openBraceIndex; i < content.length; i++) {
+        const ch = content[i];
+
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch === '\\') {
+                escaped = true;
+                continue;
+            }
+            if (ch === stringDelimiter) {
+                inString = false;
+                stringDelimiter = '';
+            }
+            continue;
+        }
+
+        if (ch === '"' || ch === "'" || ch === '`') {
+            inString = true;
+            stringDelimiter = ch;
+            continue;
+        }
+
+        if (ch === '{') {
+            depth += 1;
+            continue;
+        }
+
+        if (ch === '}') {
+            depth -= 1;
+            if (depth === 0) {
+                return i;
+            }
+        }
+    }
+
+    return -1;
+}
+
+function addDocToPaths(indexContent, docConstName) {
+    if (indexContent.includes(`...${docConstName}`)) {
+        return indexContent;
+    }
+
+    const pathsMatch = indexContent.match(/["']?paths["']?\s*:\s*\{/m);
+    if (!pathsMatch || pathsMatch.index === undefined) {
+        return indexContent;
+    }
+
+    const openBraceIndex = pathsMatch.index + pathsMatch[0].lastIndexOf('{');
+    const closeBraceIndex = findMatchingBrace(indexContent, openBraceIndex);
+
+    if (closeBraceIndex === -1) {
+        return indexContent;
+    }
+
+    const pathsBody = indexContent.slice(openBraceIndex + 1, closeBraceIndex);
+    const lineStart = indexContent.lastIndexOf('\n', openBraceIndex) + 1;
+    const pathsLine = indexContent.slice(lineStart, openBraceIndex);
+    const baseIndent = (pathsLine.match(/^\s*/) || [''])[0];
+    const entryIndent = `${baseIndent}    `;
+
+    let newPathsBody = pathsBody;
+    const trimmedBody = pathsBody.trim();
+
+    if (trimmedBody.length === 0) {
+        newPathsBody = `\n${entryIndent}...${docConstName}\n${baseIndent}`;
+    } else {
+        const trailingWhitespaceMatch = pathsBody.match(/\s*$/);
+        const trailingWhitespace = trailingWhitespaceMatch ? trailingWhitespaceMatch[0] : '';
+        let bodyWithoutTrailingWs = pathsBody.slice(0, pathsBody.length - trailingWhitespace.length);
+
+        let endIndex = bodyWithoutTrailingWs.length - 1;
+        while (endIndex >= 0 && /\s/.test(bodyWithoutTrailingWs[endIndex])) {
+            endIndex -= 1;
+        }
+
+        if (endIndex >= 0 && bodyWithoutTrailingWs[endIndex] !== ',') {
+            bodyWithoutTrailingWs = `${bodyWithoutTrailingWs.slice(0, endIndex + 1)},${bodyWithoutTrailingWs.slice(endIndex + 1)}`;
+        }
+
+        newPathsBody = `${bodyWithoutTrailingWs}\n${entryIndent}...${docConstName}${trailingWhitespace}`;
+    }
+
+    return `${indexContent.slice(0, openBraceIndex + 1)}${newPathsBody}${indexContent.slice(closeBraceIndex)}`;
+}
+
+export function createBaseDoc(lambdaName, lambdaPath, method) {
+    generateDocContent(lambdaName, lambdaPath, method);
+    const indexPath = path.join(process.cwd(), 'lambdas/__doc__/src/documents/index.ts');
+    let indexContent = fs.readFileSync(indexPath, 'utf-8');
+
+    const docConstName = toDocConstName(lambdaName);
+    const importStatement = `import { ${docConstName} } from "./lambdas/${lambdaName}";`;
+
+    if (!indexContent.includes(importStatement)) {
+        const importMatches = [...indexContent.matchAll(/^import\s.+;$/gm)];
+        if (importMatches.length > 0) {
+            const lastImport = importMatches[importMatches.length - 1];
+            const insertAt = (lastImport.index ?? 0) + lastImport[0].length;
+            indexContent = `${indexContent.slice(0, insertAt)}\n${importStatement}${indexContent.slice(insertAt)}`;
+        } else {
+            indexContent = `${importStatement}\n\n${indexContent}`;
+        }
+    }
+
+    indexContent = addDocToPaths(indexContent, docConstName);
+
+    fs.writeFileSync(indexPath, indexContent, 'utf-8');
+}
