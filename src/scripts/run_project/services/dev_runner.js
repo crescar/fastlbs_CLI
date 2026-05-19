@@ -4,14 +4,16 @@ import { buildProject } from '../../build/index.js';
 import { pathToFileURL } from 'url';
 import { clearConsole } from '../../../utils/clear_console.js';
 import { getRegisteredLambdaNames } from './lambda_registry.js';
+import { getProjectRootOrThrow } from '../../../utils/project_context.js';
 
 const DOC_LAMBDA_NAME = '__doc__';
 const ALL_LAMBDAS_FLAG = '__all__';
 
-function startProjectServer() {
+function startProjectServer(projectRoot) {
     return spawn('npm', ['run', 'start'], {
         stdio: 'inherit',
         shell: true,
+        cwd: projectRoot,
     });
 }
 
@@ -42,9 +44,10 @@ export async function runDevRunner(lambdaName) {
         throw new Error('lambdaName argument is required');
     }
 
+    const projectRoot = getProjectRootOrThrow();
     clearConsole();
     await prepareProject(lambdaName);
-    const serverProcess = startProjectServer();
+    const serverProcess = startProjectServer(projectRoot);
 
     const shutdown = () => {
         if (!serverProcess.killed) {

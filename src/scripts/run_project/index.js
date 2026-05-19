@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { clearConsole } from '../../utils/clear_console.js';
 import { getRegisteredLambdaNames } from './services/lambda_registry.js';
+import { getProjectRootOrThrow } from '../../utils/project_context.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,7 +26,7 @@ function resolveTargetLambdas(lambdaName) {
 
 export function runProject(lambdaName) {
     const runnerPath = path.join(__dirname, 'services', 'dev_runner.js');
-    const projectRoot = process.cwd();
+    const projectRoot = getProjectRootOrThrow();
     const targetLambdas = resolveTargetLambdas(lambdaName);
     const watchPaths = [
         ...targetLambdas.map((name) => path.join(projectRoot, 'lambdas', name, 'src')),

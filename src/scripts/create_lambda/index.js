@@ -5,8 +5,10 @@ import { createLambda } from './services/create_lambda.js';
 import { updateFastLbsConfigJson } from './services/update_fastlbs_config_json.js';
 import { createBaseDoc } from './services/create_base_doc.js';
 import { createFunction } from './services/create_function.js';
+import { assertValidLambdaName } from '../../utils/cli_validation.js';
 
 export async function createLambdaFunction(lambdaName) {
+    assertValidLambdaName(lambdaName);
    const { fileNotFound, exists } = existLambda(lambdaName);
    if (fileNotFound) {
         console.error(pc.red('fastlbs.config.json not found. Please make sure you are in the root directory of a FastLBS project.'));

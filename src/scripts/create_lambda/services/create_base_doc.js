@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { assertPathInsideProject, assertValidLambdaName } from '../../../utils/cli_validation.js';
+import { getProjectRootOrThrow } from '../../../utils/project_context.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,7 +18,10 @@ function toDocConstName(lambdaName) {
 }
 
 function generateDocContent(lambdaName, lambdaPath, method) {
-    const docsDir = path.join(process.cwd(), 'lambdas/__doc__/src/documents/lambdas');
+    assertValidLambdaName(lambdaName);
+    const projectRoot = getProjectRootOrThrow();
+    const docsDir = path.join(projectRoot, 'lambdas/__doc__/src/documents/lambdas');
+    assertPathInsideProject(projectRoot, docsDir, 'docs directory');
     const docConstName = toDocConstName(lambdaName);
     if (!lambdaPath.startsWith('/')) {
         lambdaPath = '/' + lambdaPath;
@@ -149,8 +154,11 @@ function addDocToPaths(indexContent, docConstName) {
 }
 
 export function createBaseDoc(lambdaName, lambdaPath, method) {
+    assertValidLambdaName(lambdaName);
+    const projectRoot = getProjectRootOrThrow();
     generateDocContent(lambdaName, lambdaPath, method);
-    const indexPath = path.join(process.cwd(), 'lambdas/__doc__/src/documents/index.ts');
+    const indexPath = path.join(projectRoot, 'lambdas/__doc__/src/documents/index.ts');
+    assertPathInsideProject(projectRoot, indexPath, 'docs index file');
     let indexContent = fs.readFileSync(indexPath, 'utf-8');
 
     const docConstName = toDocConstName(lambdaName);

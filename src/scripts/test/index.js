@@ -3,18 +3,32 @@ import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import { transformSync } from 'esbuild';
+import { getProjectRootOrThrow } from '../../utils/project_context.js';
+import { FastlbsError } from '../../utils/cli_error.js';
 
 function getJestConfigPath() {
-	const configPath = path.join(process.cwd(), 'jest.config.ts');
-	if (!fs.existsSync(configPath)) {
-		throw new Error('jest.config.ts no encontrado en el directorio actual.');
+	const projectRoot = getProjectRootOrThrow();
+	const candidates = [
+		path.join(process.cwd(), 'jest.config.ts'),
+		path.join(projectRoot, 'jest.config.ts'),
+		path.join(projectRoot, 'testing', 'jest.config.ts'),
+	];
+
+	for (const candidate of candidates) {
+		if (fs.existsSync(candidate)) {
+			return candidate;
+		}
 	}
 
-	return configPath;
+	throw new FastlbsError('jest.config.ts no encontrado.', {
+		code: 'JEST_CONFIG_NOT_FOUND',
+		hint: 'Create jest.config.ts at project root or in testing/jest.config.ts.',
+	});
 }
 
 async function loadBaseJestConfig() {
 	const jestConfigPath = getJestConfigPath();
+	const projectRoot = getProjectRootOrThrow();
 	const source = fs.readFileSync(jestConfigPath, 'utf-8');
 	const { code } = transformSync(source, {
 		loader: 'ts',
@@ -22,7 +36,7 @@ async function loadBaseJestConfig() {
 		target: 'node22',
 	});
 
-	const tempConfigPath = path.join(process.cwd(), '.fastlbs.jest.base.config.mjs');
+	const tempConfigPath = path.join(projectRoot, `.fastlbs.jest.base.config.${process.pid}.mjs`);
 	fs.writeFileSync(tempConfigPath, code, 'utf-8');
 
 	try {
@@ -132,7 +146,8 @@ async function ensureJestInstalled() {
 
 async function runJest(config) {
 	await ensureJestInstalled();
-	const configPath = path.join(process.cwd(), '.fastlbs.jest.config.json');
+	const projectRoot = getProjectRootOrThrow();
+	const configPath = path.join(projectRoot, '.fastlbs.jest.config.json');
 	fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
 
 	try {

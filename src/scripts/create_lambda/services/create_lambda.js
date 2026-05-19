@@ -1,10 +1,17 @@
 import fs from 'fs';
 import path from 'path';
+import { assertPathInsideProject, assertValidLambdaName } from '../../../utils/cli_validation.js';
+import { getProjectRootOrThrow } from '../../../utils/project_context.js';
 
 const createFolderStructure = (lambdaName) => {
-    const lambdaDir = path.join(process.cwd(), 'lambdas', lambdaName);
+    assertValidLambdaName(lambdaName);
+    const projectRoot = getProjectRootOrThrow();
+    const lambdaDir = path.join(projectRoot, 'lambdas', lambdaName);
     const srcDir = path.join(lambdaDir, 'src');
     const testDir = path.join(lambdaDir, '__tests__');
+
+    assertPathInsideProject(projectRoot, lambdaDir, 'lambda directory');
+
     fs.mkdirSync(lambdaDir, { recursive: true });
     fs.mkdirSync(srcDir, { recursive: true });
     fs.mkdirSync(testDir, { recursive: true });
@@ -12,7 +19,8 @@ const createFolderStructure = (lambdaName) => {
 }
 
 const getProyectName = () => {
-    const configPath = path.join(process.cwd(), 'fastlbs.config.json');
+    const projectRoot = getProjectRootOrThrow();
+    const configPath = path.join(projectRoot, 'fastlbs.config.json');
     if (fs.existsSync(configPath)) {
         const configContent = fs.readFileSync(configPath, 'utf-8');
         const config = JSON.parse(configContent);

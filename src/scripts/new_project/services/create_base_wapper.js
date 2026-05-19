@@ -3,6 +3,8 @@ import path from 'path';
 export function createBaseWrapper(projectName) {
     const wrapperContent =
 `
+import dotenv from 'dotenv';
+dotenv.config();
 import type {
   APIGatewayProxyEventV2,
   APIGatewayProxyResultV2,

@@ -4,6 +4,7 @@ import pc from 'picocolors';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
+import fs from 'fs';
 import { createBaseDoc } from "./services/create_base_doc.js";
 import { createBaseServerless } from "./services/create_base_serveless.js";
 import { createBaseWrapper } from "./services/create_base_wapper.js";
@@ -13,6 +14,12 @@ import { createHandlerResponses } from "./services/create_hanlder_responses.js";
 import { createBaseMiddleware } from './services/create_base_middleware.js';
 
 const execAsync = promisify(exec);
+
+function createBaseGitIgnore(projectRoot) {
+    const gitIgnorePath = path.join(projectRoot, '.gitignore');
+    const content = ['node_modules/', 'dist/', 'coverage/'].join('\n') + '\n';
+    fs.writeFileSync(gitIgnorePath, content, 'utf-8');
+}
 
 export async function createProject(projectName) {
     const projectRoot = path.join(process.cwd(), projectName);
@@ -31,6 +38,9 @@ export async function createProject(projectName) {
         createBaseDoc(projectName);
         progressBar.update(90);
         createBaseServerless(projectName);
+        createBaseGitIgnore(projectRoot);
+
+        await execAsync('git init', { cwd: projectRoot });
 
         await execAsync('npm install', { cwd: projectRoot });
 
@@ -51,6 +61,7 @@ export async function createProject(projectName) {
         console.log(pc.green('fastlbs lambda <lambda-name> to create a new lambda'));
     } catch (error) {
         console.error(pc.red(`Error creating project: ${error instanceof Error ? error.message : String(error)}`));
+        throw error;
     } finally {
         progressBar.stop();
     }

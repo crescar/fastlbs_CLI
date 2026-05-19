@@ -23,6 +23,7 @@ function creatPackageJson(projectName) {
         "devDependencies": {
             "@types/aws-lambda": "^8.10.161",
             "@types/jest": "^30.0.0",
+            "dotenv": "^16.4.7",
             "jest": "^30.4.2",
             "serverless": "^3.38.0",
             "serverless-offline": "^13.10.0",
@@ -42,7 +43,8 @@ function createTsConfig(projectName) {
         "compilerOptions": {
             "sourceMap": true,
             "target": "es2022",
-            "module": "commonjs",
+            "module": "NodeNext",
+            "moduleResolution": "NodeNext",
             "esModuleInterop": true,
             "forceConsistentCasingInFileNames": true,
             "strict": true,

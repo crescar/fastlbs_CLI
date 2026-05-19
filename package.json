@@ -1,16 +1,46 @@
 {
   "name": "fastlbs",
   "version": "1.0.0",
-  "description": "",
+  "description": "FastLBS CLI to scaffold AWS Lambda APIs in TypeScript, run locally with serverless-offline, test with Jest, and compile to Node.js JavaScript using esbuild.",
   "main": "index.js",
   "type": "module",
   "bin": {
     "fastlbs": "./bin/fastlbs.js"
   },
-  "scripts": {},
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "scripts": {
+    "test": "npm run smoke",
+    "smoke": "node --test tests/cli.smoke.test.js"
+  },
+  "keywords": [
+    "aws",
+    "aws-lambda",
+    "lambda",
+    "serverless",
+    "serverless-offline",
+    "typescript",
+    "nodejs",
+    "node",
+    "esbuild",
+    "cli",
+    "scaffold",
+    "boilerplate",
+    "generator",
+    "project-generator",
+    "api",
+    "rest-api",
+    "jest",
+    "ts-jest"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/crescar/fastlbs_CLI.git"
+  },
+  "homepage": "https://github.com/crescar/fastlbs_CLI#readme",
+  "bugs": {
+    "url": "https://github.com/crescar/fastlbs_CLI/issues"
+  },
+  "author": "Luis Crespo <crescar64@gmail.com> (https://github.com/crescar)",
+  "license": "MIT",
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "jest": "^30.4.2",
