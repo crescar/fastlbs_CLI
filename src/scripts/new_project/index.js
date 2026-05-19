@@ -17,7 +17,7 @@ const execAsync = promisify(exec);
 
 function createBaseGitIgnore(projectRoot) {
     const gitIgnorePath = path.join(projectRoot, '.gitignore');
-    const content = ['node_modules/', 'dist/', 'coverage/'].join('\n') + '\n';
+    const content = ['node_modules/', 'dist/', 'coverage/', '.env'].join('\n') + '\n';
     fs.writeFileSync(gitIgnorePath, content, 'utf-8');
 }
 

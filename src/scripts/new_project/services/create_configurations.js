@@ -43,8 +43,9 @@ function createTsConfig(projectName) {
         "compilerOptions": {
             "sourceMap": true,
             "target": "es2022",
-            "module": "NodeNext",
-            "moduleResolution": "NodeNext",
+            "module": "ESNext",
+            "moduleResolution": "Bundler",
+            "baseUrl": ".",
             "esModuleInterop": true,
             "forceConsistentCasingInFileNames": true,
             "strict": true,

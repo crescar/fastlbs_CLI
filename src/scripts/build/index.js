@@ -26,6 +26,9 @@ export async function buildProject(lambdaName) {
         minify: true,
         platform: 'node',
         format: 'esm',
+        banner: {
+            js: 'import { createRequire } from "module"; const require = createRequire(import.meta.url);',
+        },
         sourcemap: false,
     });
 
