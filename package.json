@@ -7,6 +7,12 @@
   "bin": {
     "fastlbs": "./bin/fastlbs.js"
   },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "npm run smoke",
     "smoke": "node --test tests/cli.smoke.test.js"
