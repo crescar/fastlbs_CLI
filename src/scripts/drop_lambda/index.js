@@ -120,8 +120,32 @@ function dropDocumentation(projectRoot, lambdaName){
         );
         indexContent = indexContent.replace(importRegex, '');
 
-        indexContent = removeDocFromPaths(indexContent, docConstName);
+        const pathsArrayMatch = indexContent.match(/const\s+paths(?:\s*:[^=]+)?\s*=\s*\[/m);
+        if (pathsArrayMatch && pathsArrayMatch.index !== undefined) {
+            const openBracketIndex = pathsArrayMatch.index + pathsArrayMatch[0].lastIndexOf('[');
+            let depth = 0, closeBracketIndex = -1;
+            for (let i = openBracketIndex; i < indexContent.length; i++) {
+                if (indexContent[i] === '[') depth++;
+                else if (indexContent[i] === ']') {
+                    depth--;
+                    if (depth === 0) { closeBracketIndex = i; break; }
+                }
+            }
+            if (closeBracketIndex !== -1) {
+                let pathsBody = indexContent.slice(openBracketIndex + 1, closeBracketIndex);
+                // Remove the doc symbol (with or without trailing comma/whitespace)
+                const itemRegex = new RegExp(`(^|\\n)\\s*${escapedDocConstName}\\s*,?\\s*`, 'g');
+                pathsBody = pathsBody.replace(itemRegex, (match, p1) => p1);
+                pathsBody = pathsBody.replace(/,\\s*,/g, ',');
+                pathsBody = pathsBody.replace(/^\\s*,|,\\s*$/g, '');
+                indexContent = indexContent.slice(0, openBracketIndex + 1) + pathsBody + indexContent.slice(closeBracketIndex);
+            }
+        }
 
+        indexContent = removeDocFromPaths(indexContent, docConstName);
+        indexContent = indexContent.replace(/\n{3,}/g, '\n\n');
+        indexContent = indexContent.replace(/[ \t]+\n/g, '\n');
+        indexContent = indexContent.replace(/^\s*\n/, '');
         fs.writeFileSync(indexPath, indexContent, 'utf-8');
     }
 }
