@@ -58,13 +58,13 @@ export const ${docConstName} = {
     fs.writeFileSync(docPath, content, 'utf-8');
 }
 
-function findMatchingBrace(content, openBraceIndex) {
+function findMatchingToken(content, openIndex, openChar, closeChar) {
     let depth = 0;
     let inString = false;
     let stringDelimiter = '';
     let escaped = false;
 
-    for (let i = openBraceIndex; i < content.length; i++) {
+    for (let i = openIndex; i < content.length; i++) {
         const ch = content[i];
 
         if (inString) {
@@ -89,12 +89,12 @@ function findMatchingBrace(content, openBraceIndex) {
             continue;
         }
 
-        if (ch === '{') {
+        if (ch === openChar) {
             depth += 1;
             continue;
         }
 
-        if (ch === '}') {
+        if (ch === closeChar) {
             depth -= 1;
             if (depth === 0) {
                 return i;
@@ -105,26 +105,28 @@ function findMatchingBrace(content, openBraceIndex) {
     return -1;
 }
 
-function addDocToPaths(indexContent, docConstName) {
-    if (indexContent.includes(`...${docConstName}`)) {
-        return indexContent;
-    }
-
-    const pathsMatch = indexContent.match(/["']?paths["']?\s*:\s*\{/m);
+function addDocToPathsArray(indexContent, docConstName) {
+    const pathsMatch = indexContent.match(/const\s+paths(?:\s*:[^=]+)?\s*=\s*\[/m);
     if (!pathsMatch || pathsMatch.index === undefined) {
         return indexContent;
     }
 
-    const openBraceIndex = pathsMatch.index + pathsMatch[0].lastIndexOf('{');
-    const closeBraceIndex = findMatchingBrace(indexContent, openBraceIndex);
+    const openBracketIndex = pathsMatch.index + pathsMatch[0].lastIndexOf('[');
+    const closeBracketIndex = findMatchingToken(indexContent, openBracketIndex, '[', ']');
 
-    if (closeBraceIndex === -1) {
+    if (closeBracketIndex === -1) {
         return indexContent;
     }
 
-    const pathsBody = indexContent.slice(openBraceIndex + 1, closeBraceIndex);
-    const lineStart = indexContent.lastIndexOf('\n', openBraceIndex) + 1;
-    const pathsLine = indexContent.slice(lineStart, openBraceIndex);
+    const pathsBody = indexContent.slice(openBracketIndex + 1, closeBracketIndex);
+    const escapedConstName = docConstName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const arrayItemRegex = new RegExp(`\\b${escapedConstName}\\b`);
+    if (arrayItemRegex.test(pathsBody)) {
+        return indexContent;
+    }
+
+    const lineStart = indexContent.lastIndexOf('\n', openBracketIndex) + 1;
+    const pathsLine = indexContent.slice(lineStart, openBracketIndex);
     const baseIndent = (pathsLine.match(/^\s*/) || [''])[0];
     const entryIndent = `${baseIndent}    `;
 
@@ -132,7 +134,7 @@ function addDocToPaths(indexContent, docConstName) {
     const trimmedBody = pathsBody.trim();
 
     if (trimmedBody.length === 0) {
-        newPathsBody = `\n${entryIndent}...${docConstName}\n${baseIndent}`;
+        newPathsBody = `\n${entryIndent}${docConstName}\n${baseIndent}`;
     } else {
         const trailingWhitespaceMatch = pathsBody.match(/\s*$/);
         const trailingWhitespace = trailingWhitespaceMatch ? trailingWhitespaceMatch[0] : '';
@@ -147,10 +149,10 @@ function addDocToPaths(indexContent, docConstName) {
             bodyWithoutTrailingWs = `${bodyWithoutTrailingWs.slice(0, endIndex + 1)},${bodyWithoutTrailingWs.slice(endIndex + 1)}`;
         }
 
-        newPathsBody = `${bodyWithoutTrailingWs}\n${entryIndent}...${docConstName}${trailingWhitespace}`;
+        newPathsBody = `${bodyWithoutTrailingWs}\n${entryIndent}${docConstName}${trailingWhitespace}`;
     }
 
-    return `${indexContent.slice(0, openBraceIndex + 1)}${newPathsBody}${indexContent.slice(closeBraceIndex)}`;
+    return `${indexContent.slice(0, openBracketIndex + 1)}${newPathsBody}${indexContent.slice(closeBracketIndex)}`;
 }
 
 export function createBaseDoc(lambdaName, lambdaPath, method) {
@@ -175,7 +177,7 @@ export function createBaseDoc(lambdaName, lambdaPath, method) {
         }
     }
 
-    indexContent = addDocToPaths(indexContent, docConstName);
+    indexContent = addDocToPathsArray(indexContent, docConstName);
 
     fs.writeFileSync(indexPath, indexContent, 'utf-8');
 }

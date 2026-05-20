@@ -88,7 +88,26 @@ export async function handlerSwaggerUI(_event: APIGatewayProxyEventV2, _context:
 
 function createDocument(projectName) {
     const content =
-`
+`const paths: any[] = [
+
+]
+
+function mergePaths(paths: any[]) {
+    const mergedPaths: any = {};
+    for (const doc of paths) {
+        const docPaths = doc?.paths ?? doc;
+        for (const [key, value] of Object.entries(docPaths || {})) {
+            const nextValue = (value && typeof value === "object") ? value : {};
+            if (!mergedPaths[key]) {
+                mergedPaths[key] = nextValue;
+            } else {
+                mergedPaths[key] = { ...mergedPaths[key], ...nextValue };
+            }
+        }
+    }
+    return mergedPaths;
+}
+
 export default {
     "openapi": "3.0.0",
     "info": {
@@ -97,7 +116,9 @@ export default {
         "version": "1.0.0"
     },
     "servers": [],
-    "paths": {},
+    "paths": {
+      ...mergePaths(paths)
+    },
     "components": {
         "securitySchemes": {
             "BearerAuth": {
