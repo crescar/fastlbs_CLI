@@ -1,4 +1,4 @@
-# FastLBS CLI
+#  FastLBS CLI <img src="./assets/logo.png" alt="FastLBS Logo" width="136" height="74" style="vertical-align:middle;">
 
 FastLBS is a CLI focused on AWS Lambda development with TypeScript. It scaffolds project structure, creates lambdas with tests and docs, runs local development with Serverless Offline, and compiles lambdas into deployable JavaScript artifacts.
 
