@@ -12,6 +12,7 @@ import { createConfigurations } from "./services/create_configurations.js";
 import { folderStructure } from "./services/create_folder_structure.js";
 import { createHandlerResponses } from "./services/create_hanlder_responses.js";
 import { createBaseMiddleware } from './services/create_base_middleware.js';
+import { createValidatorBaseMiddleware } from './services/validator_base_middleware.js';
 
 const execAsync = promisify(exec);
 
@@ -32,6 +33,7 @@ export async function createProject(projectName) {
         progressBar.update(40);
         createBaseWrapper(projectName);
         createBaseMiddleware(projectName);
+        createValidatorBaseMiddleware(projectName);
         progressBar.update(60);
         createHandlerResponses(projectName);
         progressBar.update(80);

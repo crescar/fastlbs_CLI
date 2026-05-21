@@ -18,7 +18,8 @@ function creatPackageJson(projectName) {
         "dependencies": {
             "@types/swagger-ui-dist": "^3.30.6",
             "aws-lambda": "^1.0.7",
-            "swagger-ui-dist": "^5.32.6"
+            "swagger-ui-dist": "^5.32.6",
+            "zod": "^4.4.3"
         },
         "devDependencies": {
             "@types/aws-lambda": "^8.10.161",

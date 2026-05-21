@@ -12,6 +12,68 @@ FastLBS helps you standardize and accelerate the full lambda lifecycle:
 - Build lambdas with esbuild into optimized JavaScript outputs.
 - Keep API documentation lambda (`__doc__`) integrated into the workflow.
 
+When you create a new project, two base middlewares are generated automatically: one for logging and one for validation with Zod. See the section "Base Middlewares" below for details and usage examples.
+
+## Base Middlewares
+
+When you create a new project with FastLBS, two base middlewares are automatically included:
+
+- `loggingMiddleware`: Logs information for each request and response.
+- `validatorMiddleware`: Validates input data using Zod schemas.
+
+### Example: How to use the middlewares
+
+You can use the middlewares in your handlers as shown below (real example based on a generated handler):
+
+```typescript
+import {
+    handlerResponse
+} from "@validatorMiddleware/common/wrappers/handlerResponse.wrapper";
+
+import { loggingMiddleware } from "@validatorMiddleware/common/middlewares/logging.middleware";
+import { HandlerStandardResponse } from "@validatorMiddleware/common/utils/handlerStandardResponse.util";
+import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
+import { validatorMiddleware, ValidationOptions } from "@validatorMiddleware/common/middlewares/validator.middleware";
+import { z } from "zod";
+
+type GreetingData = {
+    greeting: string;
+};
+
+const requestSchema = z.object({
+    name: z.string().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
+    lastName: z.string().min(1, "Last name is required").max(100, "Last name must be less than 100 characters"),
+});
+
+type RequestData = z.infer<typeof requestSchema>;
+
+async function service(
+    _event: APIGatewayProxyEventV2,
+    _context: Context
+): Promise<HandlerStandardResponse<GreetingData>> {
+    const requestData: RequestData = _event.body ? JSON.parse(_event.body) : {};
+    const { name, lastName } = requestData;
+    return new HandlerStandardResponse<GreetingData>(200, {
+        message: "Request successful",
+        status: "success",
+        data: {
+            greeting: `Hello, ${name} ${lastName}! from Lambda greeting`,
+        },
+    });
+}
+
+export const handler = handlerResponse(
+    loggingMiddleware(),
+    validatorMiddleware(
+        requestSchema,
+        ValidationOptions.BODY
+    ),
+    service,
+);
+```
+
+You can chain as many middlewares as you need, always wrapping your main function.
+
 ## Special `__doc__` Lambda
 
 FastLBS includes a special lambda named `__doc__`.
