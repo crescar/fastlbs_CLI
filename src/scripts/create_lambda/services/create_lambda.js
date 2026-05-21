@@ -31,12 +31,11 @@ const getProyectName = () => {
 
 const generateIndexFile = (srcDir, lambdaName) => {
     const projectName = getProyectName();
-    const indexContent = `
+    const indexContent =
+`
 import {
     handlerResponse
 } from "@${projectName}/common/wrappers/handlerResponse.wrapper";
-
-import { loggingMiddleware } from "@${projectName}/common/middlewares/logging.middleware";
 
 import { HandlerStandardResponse } from "@${projectName}/common/utils/handlerStandardResponse.util";
 import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
@@ -58,13 +57,9 @@ async function service(
     });
 }
 
-export const handler = handlerResponse(
-    loggingMiddleware(),
-    service,
-);
+export const handler = handlerResponse(service);
 
 `
-
     fs.writeFileSync(path.join(srcDir, 'index.ts'), indexContent.trimStart());
 }
 
