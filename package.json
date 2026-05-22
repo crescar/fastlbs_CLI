@@ -1,6 +1,6 @@
 {
   "name": "fastlbs",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "FastLBS CLI to scaffold AWS Lambda APIs in TypeScript, run locally with serverless-offline, test with Jest, and compile to Node.js JavaScript using esbuild.",
   "main": "index.js",
   "type": "module",
