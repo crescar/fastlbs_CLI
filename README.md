@@ -228,3 +228,5 @@ In short: development happens in TypeScript, deployment happens with compiled No
 ## License
 
 MIT
+
+## <a href="https://nowpayments.io/donation/Coffee" target="_blank" rel="noreferrer noopener"> Buy Me a Coffee</a>
