@@ -4,13 +4,14 @@ import path from 'path';
 export function createBaseMiddleware(projectName) {
     const content =
 `
-import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
+import type { Context } from "aws-lambda";
 import { HandlerMiddleware } from "../wrappers/handlerResponse.wrapper";
 import { HandlerErrorResponse } from "../utils/handlerErrorResponse.util";
+import type { FastlbsContext } from "../context/fastlbsContext";
 
 export function loggingMiddleware(): HandlerMiddleware {
     return async (
-        event: APIGatewayProxyEventV2,
+        event: FastlbsContext,
         context: Context,
         next
     ) => {

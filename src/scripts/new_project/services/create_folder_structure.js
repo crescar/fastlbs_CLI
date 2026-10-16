@@ -4,6 +4,7 @@ import path from 'path';
 export function folderStructure(projectName) {
     const folders = [
         `${projectName}/lambdas/__doc__/src/documents/lambdas`,
+        `${projectName}/libs/common/context`,
         `${projectName}/libs/common/middlewares`,
         `${projectName}/libs/common/utils`,
         `${projectName}/libs/common/wrappers`,

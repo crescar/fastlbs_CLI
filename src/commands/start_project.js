@@ -3,18 +3,18 @@ import { getRegisteredLambdaNames } from "../scripts/run_project/services/lambda
 import { assertValidLambdaName } from "../utils/cli_validation.js";
 import { FastlbsError } from "../utils/cli_error.js";
 
-export function startProject(program) {
-        program
+export function registerStartCommand(program) {
+    program
         .command('start [lambda-name]')
-    .alias('dev')
+        .alias('dev')
         .description('Start serverless-offline in development mode for one lambda or all lambdas')
-    .addHelpText('after', `
+        .addHelpText('after', `
 Examples:
-  $ fastlbs start
-  $ fastlbs dev
-  $ fastlbs start greeting
+    $ fastlbs start
+    $ fastlbs dev
+    $ fastlbs start greeting
 `)
-        .action( async (lambdaName) => {
+        .action(async (lambdaName) => {
             if (!lambdaName) {
                 await runProject(undefined);
                 return;
@@ -33,3 +33,5 @@ Examples:
             await runProject(lambdaName);
         });
 }
+
+export { registerStartCommand as startProject };

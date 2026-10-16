@@ -1,6 +1,2 @@
-export function nameToKebabCase(name) {
-    return name
-        .replace(/([a-z])([A-Z])/g, '$1-$2')
-        .replace(/[\s_]+/g, '-') 
-        .toLowerCase(); 
-}
+// Re-export for backward compatibility with existing internal references
+export { nameToKebabCase } from './string_utils.js';

@@ -36,7 +36,9 @@ const html = `
 
 function createIndexDoc(projectName) {
     const content =
-`
+`// Prevent eagerInit in lambdas when imported by __doc__
+(globalThis as any).__FASTLBS_DOC_MODE__ = true;
+
 import { getAbsoluteFSPath } from "swagger-ui-dist";
 import type {
   APIGatewayProxyEventV2,
@@ -80,10 +82,10 @@ export async function handlerSwaggerUI(_event: APIGatewayProxyEventV2, _context:
     };
   }
 }
-
-`
+`;
     const filePath = path.join(process.cwd(), `${projectName}/lambdas/__doc__/src/index.ts`);
-    fs.writeFileSync(filePath, content);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content, 'utf-8');
 }
 
 function createDocument(projectName) {
@@ -126,17 +128,25 @@ export default {
                 "scheme": "bearer",
                 "bearerFormat": "JWT",
             },
+            "BasicAuth": {
+                "type": "http",
+                "scheme": "basic",
+            },
         },
     },
     "security": [
         {
             "BearerAuth": [],
         },
+        {
+            "BasicAuth": [],
+        },
     ],
 }
-`
+`;
     const filePath = path.join(process.cwd(), `${projectName}/lambdas/__doc__/src/documents/index.ts`);
-    fs.writeFileSync(filePath, content);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content, 'utf-8');
 }
 
 export function createBaseDoc(projectName) {

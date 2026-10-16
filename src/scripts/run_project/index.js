@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { clearConsole } from '../../utils/clear_console.js';
 import { getRegisteredLambdaNames } from './services/lambda_registry.js';
 import { getProjectRootOrThrow } from '../../utils/project_context.js';
+import { FastlbsError } from '../../utils/cli_error.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,7 +19,10 @@ function resolveTargetLambdas(lambdaName) {
 
     const allLambdas = getRegisteredLambdaNames();
     if (!allLambdas.length) {
-        throw new Error('No lambdas registered in fastlbs.config.json');
+        throw new FastlbsError('No lambdas registered in fastlbs.config.json.', {
+            code: 'NO_LAMBDAS_FOUND',
+            hint: 'Create a lambda first using: fastlbs lambda <lambda-name>',
+        });
     }
 
     return allLambdas;

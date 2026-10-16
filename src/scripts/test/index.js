@@ -7,159 +7,165 @@ import { getProjectRootOrThrow } from '../../utils/project_context.js';
 import { FastlbsError } from '../../utils/cli_error.js';
 
 function getJestConfigPath() {
-	const projectRoot = getProjectRootOrThrow();
-	const candidates = [
-		path.join(process.cwd(), 'jest.config.ts'),
-		path.join(projectRoot, 'jest.config.ts'),
-		path.join(projectRoot, 'testing', 'jest.config.ts'),
-	];
+    const projectRoot = getProjectRootOrThrow();
+    const candidates = [
+        path.join(projectRoot, 'jest.config.ts'),
+        path.join(projectRoot, 'testing', 'jest.config.ts'),
+    ];
 
-	for (const candidate of candidates) {
-		if (fs.existsSync(candidate)) {
-			return candidate;
-		}
-	}
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
 
-	throw new FastlbsError('jest.config.ts no encontrado.', {
-		code: 'JEST_CONFIG_NOT_FOUND',
-		hint: 'Create jest.config.ts at project root or in testing/jest.config.ts.',
-	});
+    throw new FastlbsError('jest.config.ts not found in project root.', {
+        code: 'JEST_CONFIG_NOT_FOUND',
+        hint: 'Create jest.config.ts at project root or in testing/jest.config.ts.',
+    });
 }
 
 async function loadBaseJestConfig() {
-	const jestConfigPath = getJestConfigPath();
-	const projectRoot = getProjectRootOrThrow();
-	const source = fs.readFileSync(jestConfigPath, 'utf-8');
-	const { code } = transformSync(source, {
-		loader: 'ts',
-		format: 'esm',
-		target: 'node22',
-	});
+    const jestConfigPath = getJestConfigPath();
+    const projectRoot = getProjectRootOrThrow();
+    const source = fs.readFileSync(jestConfigPath, 'utf-8');
+    const { code } = transformSync(source, {
+        loader: 'ts',
+        format: 'esm',
+        target: 'node22',
+    });
 
-	const tempConfigPath = path.join(projectRoot, `.fastlbs.jest.base.config.${process.pid}.mjs`);
-	fs.writeFileSync(tempConfigPath, code, 'utf-8');
+    const tempConfigPath = path.join(projectRoot, `.fastlbs.jest.base.config.${process.pid}.mjs`);
+    fs.writeFileSync(tempConfigPath, code, 'utf-8');
 
-	try {
-		const tempConfigUrl = `${pathToFileURL(tempConfigPath).href}?t=${Date.now()}`;
-		const module = await import(tempConfigUrl);
-		return module.default ?? module;
-	} finally {
-		if (fs.existsSync(tempConfigPath)) {
-			fs.unlinkSync(tempConfigPath);
-		}
-	}
+    try {
+        const tempConfigUrl = `${pathToFileURL(tempConfigPath).href}?t=${Date.now()}`;
+        const module = await import(tempConfigUrl);
+        return module.default ?? module;
+    } finally {
+        if (fs.existsSync(tempConfigPath)) {
+            fs.unlinkSync(tempConfigPath);
+        }
+    }
 }
 
 function normalizeStringArray(value) {
-	if (!Array.isArray(value)) {
-		return [];
-	}
+    if (!Array.isArray(value)) {
+        return [];
+    }
 
-	return value.filter((item) => typeof item === 'string');
+    return value.filter((item) => typeof item === 'string');
 }
 
 function mapLambdaTestMatch(testMatch, lambdaName) {
-	const lambdaPattern = `<rootDir>/lambdas/${lambdaName}/**/*.spec.ts`;
-	const basePatterns = normalizeStringArray(testMatch);
-	let replaced = false;
+    const lambdaPattern = `<rootDir>/lambdas/${lambdaName}/**/*.spec.ts`;
+    const basePatterns = normalizeStringArray(testMatch);
+    let replaced = false;
 
-	const mapped = basePatterns.map((pattern) => {
-		if (pattern.includes('<rootDir>/lambdas/')) {
-			replaced = true;
-			return lambdaPattern;
-		}
-		return pattern;
-	});
+    const mapped = basePatterns.map((pattern) => {
+        if (pattern.includes('<rootDir>/lambdas/')) {
+            replaced = true;
+            return lambdaPattern;
+        }
+        return pattern;
+    });
 
-	if (!replaced) {
-		mapped.unshift(lambdaPattern);
-	}
+    if (!replaced) {
+        mapped.unshift(lambdaPattern);
+    }
 
-	return [...new Set(mapped)];
+    return [...new Set(mapped)];
 }
 
 function mapLambdaRoots(roots, lambdaName) {
-	const lambdaRoot = `<rootDir>/lambdas/${lambdaName}`;
-	const baseRoots = normalizeStringArray(roots);
-	let replaced = false;
+    const lambdaRoot = `<rootDir>/lambdas/${lambdaName}`;
+    const baseRoots = normalizeStringArray(roots);
+    let replaced = false;
 
-	const mapped = baseRoots.map((root) => {
-		if (root === '<rootDir>/lambdas') {
-			replaced = true;
-			return lambdaRoot;
-		}
-		return root;
-	});
+    const mapped = baseRoots.map((root) => {
+        if (root === '<rootDir>/lambdas') {
+            replaced = true;
+            return lambdaRoot;
+        }
+        return root;
+    });
 
-	if (!replaced) {
-		mapped.unshift(lambdaRoot);
-	}
+    if (!replaced) {
+        mapped.unshift(lambdaRoot);
+    }
 
-	return [...new Set(mapped)];
+    return [...new Set(mapped)];
 }
 
 async function createJestConfig(lambdaName) {
-	const baseConfig = await loadBaseJestConfig();
-	const runAllLambdas = !lambdaName;
+    const baseConfig = await loadBaseJestConfig();
+    const runAllLambdas = !lambdaName;
 
-	if (runAllLambdas) {
-		return baseConfig;
-	}
+    if (runAllLambdas) {
+        return baseConfig;
+    }
 
-	return {
-		...baseConfig,
-		testMatch: mapLambdaTestMatch(baseConfig.testMatch, lambdaName),
-		roots: mapLambdaRoots(baseConfig.roots, lambdaName),
-	};
+    return {
+        ...baseConfig,
+        testMatch: mapLambdaTestMatch(baseConfig.testMatch, lambdaName),
+        roots: mapLambdaRoots(baseConfig.roots, lambdaName),
+    };
 }
 
 function runCommand(command, args, options = {}) {
-	return new Promise((resolve, reject) => {
-		const processCommand = spawn(command, args, {
-			stdio: 'inherit',
-			shell: true,
-			...options,
-		});
+    return new Promise((resolve, reject) => {
+        const processCommand = spawn(command, args, {
+            stdio: 'inherit',
+            shell: true,
+            ...options,
+        });
 
-		processCommand.on('error', reject);
-		processCommand.on('exit', (code) => {
-			if (code === 0) {
-				resolve();
-				return;
-			}
-			reject(new Error(`Command failed with exit code ${code}`));
-		});
-	});
+        processCommand.on('error', reject);
+        processCommand.on('exit', (code) => {
+            if (code === 0) {
+                resolve();
+                return;
+            }
+            reject(new FastlbsError(`Test command failed with exit code ${code}`, {
+                code: 'TEST_EXECUTION_FAILED',
+                exitCode: code,
+            }));
+        });
+    });
 }
 
-function getJestExecutablePath() {
-	const jestBinary = process.platform === 'win32' ? 'jest.cmd' : 'jest';
-	return path.join(process.cwd(), 'node_modules', '.bin', jestBinary);
+function getJestExecutablePath(projectRoot) {
+    const jestBinary = process.platform === 'win32' ? 'jest.cmd' : 'jest';
+    return path.join(projectRoot, 'node_modules', '.bin', jestBinary);
 }
 
-async function ensureJestInstalled() {
-	const jestExecutablePath = getJestExecutablePath();
-	if (!fs.existsSync(jestExecutablePath)) {
-		throw new Error('Jest no esta instalado. Ejecuta npm install para instalar las dependencias del package.json.');
-	}
+async function ensureJestInstalled(projectRoot) {
+    const jestExecutablePath = getJestExecutablePath(projectRoot);
+    if (!fs.existsSync(jestExecutablePath)) {
+        throw new FastlbsError('Jest is not installed in the project.', {
+            code: 'JEST_NOT_INSTALLED',
+            hint: 'Run "npm install" inside the project to install all dependencies.',
+        });
+    }
 }
 
 async function runJest(config) {
-	await ensureJestInstalled();
-	const projectRoot = getProjectRootOrThrow();
-	const configPath = path.join(projectRoot, '.fastlbs.jest.config.json');
-	fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+    const projectRoot = getProjectRootOrThrow();
+    await ensureJestInstalled(projectRoot);
 
-	try {
-		await runCommand('npx', ['jest', '--config', configPath]);
-	} finally {
-		if (fs.existsSync(configPath)) {
-			fs.unlinkSync(configPath);
-		}
-	}
+    const configPath = path.join(projectRoot, '.fastlbs.jest.config.json');
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+
+    try {
+        await runCommand('npx', ['jest', '--config', configPath], { cwd: projectRoot });
+    } finally {
+        if (fs.existsSync(configPath)) {
+            fs.unlinkSync(configPath);
+        }
+    }
 }
 
 export async function runTests(lambdaName) {
-	const config = await createJestConfig(lambdaName);
-	await runJest(config);
+    const config = await createJestConfig(lambdaName);
+    await runJest(config);
 }
