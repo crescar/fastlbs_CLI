@@ -13,6 +13,15 @@ export function asFastlbsError(error) {
         return error;
     }
 
+    // Handle user cancellation in interactive prompts (e.g. Enquirer Ctrl+C)
+    if (!error || error === '' || error?.name === 'ExitPromptError') {
+        return new FastlbsError('Operation cancelled by user.', {
+            code: 'OPERATION_CANCELLED',
+            hint: 'Command aborted.',
+            exitCode: 0,
+        });
+    }
+
     return new FastlbsError(
         error instanceof Error ? error.message : String(error),
         {

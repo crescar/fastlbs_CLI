@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { nameToKebabCase } from "../../../utils/hanlders_name.js";
+import { nameToKebabCase } from "../../../utils/string_utils.js";
 
-function creatPackageJson(projectName) {
+function createPackageJson(projectName) {
     const content = {
         "name": nameToKebabCase(projectName),
         "version": "1.0.0",
@@ -28,13 +28,14 @@ function creatPackageJson(projectName) {
             "jest": "^30.4.2",
             "serverless": "^3.38.0",
             "serverless-offline": "^13.10.0",
-            "ts-jest": "^29.4.9"
+            "ts-jest": "^29.4.9",
+            "tsx": "^4.19.3"
         },
         "scripts": {
             "start": "serverless offline start -t"
         },
         "type": "module"
-    }
+    };
     const filePath = path.join(process.cwd(), projectName, 'package.json');
     fs.writeFileSync(filePath, JSON.stringify(content, null, 2));
 }
@@ -79,7 +80,7 @@ function createTsConfig(projectName) {
             "**/coverage",
             "**/node_modules"
         ]
-    }
+    };
     const filePath = path.join(process.cwd(), projectName, 'tsconfig.json');
     fs.writeFileSync(filePath, JSON.stringify(content, null, 2));
 }
@@ -122,10 +123,9 @@ const JestConfigBase: Config = {
 };
 
 export default JestConfigBase;
-    
-`
+`;
     const filePath = path.join(process.cwd(), projectName, 'jest.config.ts');
-    fs.writeFileSync(filePath, content);
+    fs.writeFileSync(filePath, content.trimStart());
 }
 
 function createFastLbsConfig(projectName) {
@@ -133,13 +133,13 @@ function createFastLbsConfig(projectName) {
         "service": projectName,
         "frameworkVersion": "1",
         "lambdas": {},
-    }
+    };
     const filePath = path.join(process.cwd(), projectName, 'fastlbs.config.json');
     fs.writeFileSync(filePath, JSON.stringify(content, null, 2));
 }
 
 export function createConfigurations(projectName) {
-    creatPackageJson(projectName);
+    createPackageJson(projectName);
     createTsConfig(projectName);
     createJestConfig(projectName);
     createFastLbsConfig(projectName);

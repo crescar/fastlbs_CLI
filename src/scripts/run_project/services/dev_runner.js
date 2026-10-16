@@ -33,9 +33,9 @@ function resolveTargetLambdas(lambdaName) {
 async function prepareProject(lambdaName) {
     const targetLambdas = resolveTargetLambdas(lambdaName);
     for (const name of targetLambdas) {
-        await buildProject(name);
+        await buildProject(name, { type: 'bundle' });
     }
-    await buildProject(DOC_LAMBDA_NAME);
+    await buildProject(DOC_LAMBDA_NAME, { type: 'bundle' });
     autoGenerateServerless();
 }
 

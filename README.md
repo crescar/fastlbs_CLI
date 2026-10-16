@@ -1,232 +1,521 @@
-#  FastLBS CLI <img src="./assets/logo.png" alt="FastLBS Logo" width="136" height="74" style="vertical-align:middle;">
+<p align="center">
+  <img src="./assets/logo.png" alt="FastLBS Logo" width="180">
+</p>
 
-FastLBS is a CLI focused on AWS Lambda development with TypeScript. It scaffolds project structure, creates lambdas with tests and docs, runs local development with Serverless Offline, and compiles lambdas into deployable JavaScript artifacts.
+<h1 align="center">FastLBS</h1>
 
-## What This CLI Does
+<p align="center">
+  <strong>The Enterprise-Grade TypeScript Framework & CLI for AWS Lambda Microservices</strong>
+</p>
 
-FastLBS helps you standardize and accelerate the full lambda lifecycle:
+<p align="center">
+  <a href="https://www.npmjs.com/package/fastlbs"><img src="https://img.shields.io/npm/v/fastlbs.svg?style=flat-square&color=blue" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/fastlbs"><img src="https://img.shields.io/npm/dm/fastlbs.svg?style=flat-square&color=brightgreen" alt="npm downloads"></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node.js-%3E%3D20.x-green.svg?style=flat-square" alt="Node version"></a>
+  <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-5.x-blue.svg?style=flat-square" alt="TypeScript"></a>
+  <a href="https://aws.amazon.com/lambda/"><img src="https://img.shields.io/badge/AWS%20Lambda-Serverless-orange.svg?style=flat-square" alt="AWS Lambda"></a>
+  <a href="https://github.com/crescar/fastlbs_CLI/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="license"></a>
+</p>
 
-- Create a ready-to-work project structure for AWS Lambda.
-- Generate lambdas with base code, Jest tests, docs, and serverless function config.
-- Run local development quickly.
-- Build lambdas with esbuild into optimized JavaScript outputs.
-- Keep API documentation lambda (`__doc__`) integrated into the workflow.
+<p align="center">
+  🌐 <strong>Language / Idioma:</strong> <strong>English</strong> | <a href="./README.es.md">Español</a>
+</p>
 
-When you create a new project, two base middlewares are generated automatically: one for logging and one for validation with Zod. See the section "Base Middlewares" below for details and usage examples.
+---
 
-## Base Middlewares
+## Overview
 
-When you create a new project with FastLBS, two base middlewares are automatically included:
+**FastLBS** is an enterprise-grade CLI and development framework designed specifically for building, testing, documenting, and deploying mission-critical **AWS Lambda** microservices with **TypeScript**.
 
-- `loggingMiddleware`: Logs information for each request and response.
-- `validatorMiddleware`: Validates input data using Zod schemas.
+Developing serverless applications for enterprise workloads often presents significant engineering challenges:
+- **Cold start latencies** caused by unoptimized dependencies and redundant database/secret initialization.
+- **Documentation drift** between actual code logic and OpenAPI/Swagger specifications.
+- **Untyped container context** and boilerplate code when parsing API Gateway events.
+- **Complex local development loops** requiring heavy multi-step compilation pipelines.
 
-### Example: How to use the middlewares
+FastLBS solves these problems natively by unifying **esbuild on-the-fly compilation**, **cold-start container warmup**, **automated OpenAPI 3.0 generation from Zod**, **typed event wrappers**, and **bi-directional Serverless Framework synchronization** into an intuitive developer workflow.
 
-You can use the middlewares in your handlers as shown below (real example based on a generated handler):
+---
 
-```typescript
-import {
-    handlerResponse
-} from "@validatorMiddleware/common/wrappers/handlerResponse.wrapper";
+## Why Choose FastLBS? (Enterprise Feature Matrix)
 
-import { loggingMiddleware } from "@validatorMiddleware/common/middlewares/logging.middleware";
-import { HandlerStandardResponse } from "@validatorMiddleware/common/utils/handlerStandardResponse.util";
-import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
-import { validatorMiddleware, ValidationOptions } from "@validatorMiddleware/common/middlewares/validator.middleware";
-import { z } from "zod";
+| Feature | Raw Serverless / Vanilla Lambda | AWS SAM | NestJS on Lambda | FastLBS |
+| :--- | :---: | :---: | :---: | :---: |
+| **Language & Tooling** | Manual TS Setup | YAML heavy | Heavy Decorators | **Pure TypeScript + esbuild** |
+| **Cold-Start Warmup** | Manual Global Hacks | Manual | Slow (Container size >50MB) | **Native `init` Hook + In-Memory Cache** |
+| **Context Safety** | Untyped `any` | Untyped `any` | Heavy DI overhead | **`FastlbsContext<TCustom, TAuth>`** |
+| **OpenAPI / Swagger** | Manual JSON/YAML | Manual OpenApi file | Requires Decorators | **Zero-Manual: Auto-generated from Zod** |
+| **Local Development** | Slow watcher setups | Docker dependency | Heavy bootstrap | **Sub-second reload with live Serverless Offline** |
+| **Build Artifacts** | Monolithic zip | Standard zip | Huge vendor bundles | **Dual Mode: Inlined Bundle or Modular Layers** |
+| **Authorizer Primitives** | Manual boilerplate | Manual IAM policy | Middleware wrapper | **Native `handlerAuthorizer` with typed user propagation** |
 
-type GreetingData = {
-    greeting: string;
-};
+---
 
-const requestSchema = z.object({
-    name: z.string().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
-    lastName: z.string().min(1, "Last name is required").max(100, "Last name must be less than 100 characters"),
-});
+## Table of Contents
 
-type RequestData = z.infer<typeof requestSchema>;
+- [Overview](#overview)
+- [Why Choose FastLBS? (Enterprise Feature Matrix)](#why-choose-fastlbs-enterprise-feature-matrix)
+- [Architecture & Workflow](#architecture--workflow)
+- [Quick Start in 60 Seconds](#quick-start-in-60-seconds)
+- [Core Enterprise Capabilities](#core-enterprise-capabilities)
+  - [1. Cold-Start Warmup & Typed Warm Context](#1-cold-start-warmup--typed-warm-context)
+  - [2. Zero-Manual OpenAPI 3.0 Documentation with Zod](#2-zero-manual-openapi-30-documentation-with-zod)
+  - [3. Bi-Directional Serverless Synchronization](#3-bi-directional-serverless-synchronization)
+  - [4. Dedicated Authorizers & Auxiliary Workers](#4-dedicated-authorizers--auxiliary-workers)
+  - [5. Method-Specific Validation Middlewares](#5-method-specific-validation-middlewares)
+  - [6. Production Build Strategies (Lambda Layers)](#6-production-build-strategies-lambda-layers)
+- [CLI Command Reference](#cli-command-reference)
+- [Project Directory Structure](#project-directory-structure)
+- [Enterprise CI/CD Deployment Guide](#enterprise-cicd-deployment-guide)
+- [Generative Engine & Enterprise FAQ (GEO/SEO)](#generative-engine--enterprise-faq-geoseo)
+- [Community & License](#community--license)
 
-async function service(
-    _event: APIGatewayProxyEventV2,
-    _context: Context
-): Promise<HandlerStandardResponse<GreetingData>> {
-    const requestData: RequestData = _event.body ? JSON.parse(_event.body) : {};
-    const { name, lastName } = requestData;
-    return new HandlerStandardResponse<GreetingData>(200, {
-        message: "Request successful",
-        status: "success",
-        data: {
-            greeting: `Hello, ${name} ${lastName}! from Lambda greeting`,
-        },
-    });
-}
+---
 
-export const handler = handlerResponse(
-    loggingMiddleware(),
-    validatorMiddleware(
-        requestSchema,
-        ValidationOptions.BODY
-    ),
-    service,
-);
+## Architecture & Workflow
+
+FastLBS separates your application concerns into a clean modular architecture:
+
+```mermaid
+flowchart TD
+    subgraph Client["Client Request (Edge / Local)"]
+        Req["HTTP / SQS / Cron Trigger"]
+    end
+
+    subgraph FastLBS_Runtime["FastLBS Runtime Engine"]
+        Init{"Cold Start?"}
+        ColdInit["Execute init() once\n(Prisma / DB Pool / AWS Secrets)"]
+        WarmContext["Inject cached FastlbsContext\n(event.custom, event.auth)"]
+        
+        AuthCheck{"Has Authorizer?"}
+        RunAuth["Execute handlerAuthorizer\n(Validate JWT / API Key)"]
+        
+        Validator["validatorMiddleware\n(Zod schema validation)"]
+        Service["Execute Service Logic\n(Type-safe Business Code)"]
+        StdResp["HandlerStandardResponse\n(200, 201, 400, 401, 404, 500)"]
+    end
+
+    subgraph DocSync["Automated Systems"]
+        ZodIntrospect["zodOpenApi.util\n(Translate Zod -> OpenAPI 3.0)"]
+        SwaggerUI["Swagger UI Lambda (__doc__)\nhttp://localhost:3000/api/doc"]
+        SlsSync["lambda_config_sync\n(Auto-update serverless.yml)"]
+    end
+
+    Req --> Init
+    Init -- Yes --> ColdInit --> WarmContext
+    Init -- No (Warm) --> WarmContext
+    WarmContext --> AuthCheck
+    AuthCheck -- Yes --> RunAuth --> Validator
+    AuthCheck -- No --> Validator
+    Validator --> Service --> StdResp
+
+    Validator -.-> ZodIntrospect -.-> SwaggerUI
+    Service -.-> SlsSync
 ```
 
-You can chain as many middlewares as you need, always wrapping your main function.
+---
 
-## Special `__doc__` Lambda
+## Quick Start in 60 Seconds
 
-FastLBS includes a special lambda named `__doc__`.
+### 1. Installation
 
-This lambda is intended to expose and serve your API documentation using Swagger/OpenAPI. It works as a dedicated documentation endpoint inside the project and is part of the normal build/deployment workflow.
-
-### What it is for
-
-- Serve Swagger/OpenAPI documentation for your lambdas.
-- Centralize API path definitions in one place.
-- Keep documentation deployable together with the rest of the project.
-
-### How it works
-
-- The documentation source lives inside the `__doc__` lambda files.
-- Route/path documentation can be defined manually in JSON-style structures.
-- Generated lambda docs can be extended or adjusted manually at any time.
-
-### Important detail
-
-The `__doc__` lambda is fully editable. You can customize the Swagger/OpenAPI document as much as you want, including:
-
-- titles
-- descriptions
-- tags
-- responses
-- schemas
-- security definitions
-- custom paths or manual documentation entries
-
-In other words, FastLBS gives you a starting point, but the `__doc__` lambda remains completely under your control.
-
-## Why Use FastLBS
-
-FastLBS is useful when you want consistency, speed, and fewer manual steps.
-
-### Development improvements
-
-- Faster onboarding: new developers can create a project and first lambda in minutes.
-- Less repetitive work: common files, wrappers, middleware, docs, and tests are generated.
-- Standardized structure: all lambdas follow the same conventions.
-- Safer iteration: built-in test and local run workflows reduce integration mistakes.
-- Better automation readiness: build output is artifact-friendly for CI/CD.
-
-### Operational benefits
-
-- Build artifacts are compiled JavaScript, ready for Node.js runtime on AWS.
-- You can deploy with Serverless Framework or your own artifact pipeline.
-- Since code is bundled/minified, AWS does not need your local development setup.
-
-## Installation
-
-Global installation:
+Install FastLBS globally via npm:
 
 ```bash
 npm install -g fastlbs
 ```
 
-Local usage in this repository:
+### 2. Scaffold a New Enterprise Project
 
 ```bash
-npm install
-node ./bin/fastlbs.js --help
+fastlbs new my-enterprise-api
+cd my-enterprise-api
 ```
 
-## Quick Start
+### 3. Generate an HTTP Lambda
 
 ```bash
-fastlbs new my-api
-cd my-api
 fastlbs lambda greeting
-fastlbs test greeting
-fastlbs build greeting
+```
+*The interactive wizard prompts you to select HTTP method, route (`v1/greeting`), CORS, and whether to attach an authorizer.*
+
+### 4. Start Local Development
+
+```bash
 fastlbs start
 ```
+*Your API is immediately running at `http://localhost:3000/v1/greeting` with Swagger UI interactive documentation ready at `http://localhost:3000/api/doc`.*
 
-## Commands
+---
 
-```bash
-fastlbs new <project-name>
-fastlbs lambda <lambda-name>
-fastlbs build <lambda-name>
-fastlbs start [lambda-name]
-fastlbs test [lambda-name]
-fastlbs drop <lambda-name>
-fastlbs create-middleware <middleware-name>
+## Core Enterprise Capabilities
+
+### 1. Cold-Start Warmup & Typed Warm Context
+
+In enterprise applications, reconnecting to databases (e.g. Prisma, TypeORM, Mongoose) or fetching decrypted credentials from AWS Secrets Manager on every request causes unacceptable latency.
+
+FastLBS provides native container lifecycle management:
+- **`init` Function**: Runs **only once** on container cold start.
+- **In-Memory Caching**: Resolved connections and secrets are cached in container memory and injected directly into `event.custom`.
+- **Fail-Safe Container Resilience**: If cold-start initialization fails due to a network glitch, the internal singleton promise resets automatically, allowing the container to retry cleanly on the next request.
+
+```typescript
+// lambdas/users/src/index.ts
+import { handlerResponse } from "@my-api/common/wrappers/handlerResponse.wrapper";
+import type { FastlbsContext, DefaultWarmContext } from "@my-api/common/context/fastlbsContext";
+import { HandlerStandardResponse } from "@my-api/common/utils/handlerStandardResponse.util";
+import { PrismaClient } from "@prisma/client";
+
+// Define your custom container context:
+interface AppContext extends DefaultWarmContext {
+  db: PrismaClient;
+  stage: string;
+}
+
+// Runs ONCE during cold start:
+const init = async (): Promise<AppContext> => {
+  const db = new PrismaClient();
+  await db.$connect();
+  return {
+    db,
+    stage: process.env.STAGE ?? "dev",
+  };
+};
+
+async function service(event: FastlbsContext<AppContext>) {
+  // 100% type-safe autocompletion:
+  const users = await event.custom.db.user.findMany({ take: 10 });
+
+  // Convenient built-in helper methods:
+  const search = event.getQueryParam("search", "");
+  const role = event.getHeader("x-user-role", "guest");
+
+  return new HandlerStandardResponse(200, {
+    status: "success",
+    message: "Users retrieved successfully",
+    data: { users, filter: { search, role } },
+  });
+}
+
+export const handler = handlerResponse<any, AppContext>(
+  {
+    init,
+    event: { method: "GET", path: "v1/users", cors: true },
+    doc: {
+      summary: "List enterprise users",
+      tags: ["USERS"],
+    },
+  },
+  service
+);
 ```
 
-## Recommended Development Flow
+---
 
-1. Create project scaffold.
-2. Create one or more lambdas.
-3. Run tests locally.
-4. Build lambdas to `dist/`.
-5. Run and validate with Serverless Offline.
-6. Deploy compiled artifacts to AWS.
+### 2. Zero-Manual OpenAPI 3.0 Documentation with Zod
 
-## Deployment Options
+Stop maintaining hand-crafted JSON or YAML files for Swagger. FastLBS automatically introspects your Zod validation schemas and translates them into a complete OpenAPI 3.0 specification:
 
-You can deploy in two common ways.
+- **Full Zod Translation**: Request bodies, query parameters, path variables, and headers defined in Zod schemas are converted into OpenAPI schema components via `z.toJSONSchema()`.
+- **Rich Documentation Metas**: Use `.describe("...")` and `.meta({ example: "..." })` directly on your Zod fields.
+- **Dual Authentication Out-of-the-Box**: Configured with both **`BearerAuth`** (JWT) and **`BasicAuth`**.
+- **Error Schema Mapping**: Map standard HTTP error codes (`400`, `401`, `404`, `500`) directly to Zod error schemas.
 
-### Option 1: Deploy with Serverless Framework
+```typescript
+// lambdas/orders/src/index.ts
+import { z } from "zod";
+import { handlerResponse } from "@my-api/common/wrappers/handlerResponse.wrapper";
+import { validatorMiddleware, ValidationOptions } from "@my-api/common/middlewares/validator.middleware";
 
-Use generated `serverlessConfig` + `serverless.yml` flow.
+const CreateOrderSchema = z.object({
+  customerId: z.string().uuid().describe("Unique customer identifier"),
+  items: z.array(z.object({
+    productId: z.string(),
+    quantity: z.number().int().positive(),
+  })).min(1).describe("List of ordered items"),
+});
 
-In FastLBS, Serverless is primarily used as a local development environment to emulate AWS behavior on your machine. This helps teams develop and validate lambdas locally before deployment.
+const OrderResponseSchema = z.object({
+  orderId: z.string(),
+  status: z.enum(["PENDING", "CONFIRMED"]),
+});
 
-FastLBS generates only a base Serverless configuration as a starting point. From there, the configuration can be expanded and used explicitly across the whole project according to your infrastructure, events, plugins, stages, and deployment strategy.
+export const handler = handlerResponse(
+  {
+    event: { method: "POST", path: "v1/orders", cors: true },
+    doc: {
+      summary: "Create new order",
+      description: "Creates an order and validates payload via Zod.",
+      tags: ["ORDERS"],
+      security: ["BearerAuth"],
+      response: OrderResponseSchema,
+      errors: {
+        400: { description: "Validation error" },
+        401: { description: "Unauthorized" },
+      },
+    },
+  },
+  validatorMiddleware(CreateOrderSchema, ValidationOptions.BODY),
+  orderService
+);
+```
 
-Typical approach:
+Access your interactive Swagger UI at **`http://localhost:3000/api/doc`** during local development!
 
-1. Build target lambda(s) and `__doc__`.
-2. Generate/update serverless definitions.
-3. Run `serverless deploy` in your deployment process.
+---
 
-This is usually the fastest way when your team already uses Serverless Framework.
+### 3. Bi-Directional Serverless Synchronization
 
-### Option 2: Deploy compiled artifacts directly (custom pipeline)
+No more editing `serverlessConfig/functions/<lambda>.json` by hand.
 
-If you use custom CI/CD or platform pipelines:
+FastLBS synchronizes your Serverless configuration directly from your TypeScript code whenever you run `fastlbs start` or `fastlbs build`.
 
-1. Detect changed lambdas from git diff.
-2. Always include `__doc__` plus changed lambdas in the build set.
-3. Compile each target lambda to `dist/<lambda>/index.js`.
-4. Zip compiled outputs.
-5. Publish/update Lambda code in AWS.
-6. Update events/triggers from your IaC or deployment system.
+You can declare routes and triggers in `handlerResponse`:
+```typescript
+export const handler = handlerResponse(
+  {
+    event: { method: "PUT", path: "v1/users/{id}", cors: true },
+    authorizer: "auth",
+  },
+  service
+);
+```
 
-Example pipeline behavior:
+Or using standard `@fastlbs` JSDoc annotations:
+```typescript
+/**
+ * @fastlbs
+ * @method PUT
+ * @path v1/users/{id}
+ * @cors true
+ * @authorizer auth
+ * @summary Update user profile
+ */
+export const handler = handlerResponse(service);
+```
 
-- Pipeline detects changes in `lambdas/*`.
-- Pipeline compiles `__doc__` and each changed lambda.
-- Pipeline compresses compiled outputs.
-- Pipeline deploys code and exposes/update configured events in AWS.
+FastLBS reads your code, extracts HTTP routes, methods, authorizers, and CORS settings, and automatically updates `serverlessConfig/functions/users.json` and `serverless.yml` idempotently.
 
-## Important Note About AWS Runtime Dependencies
+---
 
-With this workflow, AWS executes the compiled JavaScript artifacts. In most setups, you do not need to ship your full development environment to AWS.
+### 4. Dedicated Authorizers & Auxiliary Workers
 
-- You typically do not need to install npm dependencies directly on AWS runtime environments.
-- You do not need to send your full project source for execution.
-- Build pipeline produces the deployable output in `dist/`.
+Enterprise systems need to authenticate requests at the API Gateway edge and run non-HTTP background tasks (SQS consumers, scheduled cron jobs, S3 triggers).
 
-In short: development happens in TypeScript, deployment happens with compiled Node.js artifacts.
+#### Authorizer Lambdas (`handlerAuthorizer`)
+Create a central authentication lambda that validates incoming Bearer tokens and generates standard AWS IAM policies:
 
-## Creator
+```typescript
+// lambdas/auth/src/index.ts
+import { handlerAuthorizer } from "@my-api/common/wrappers/handlerResponse.wrapper";
 
-- Luis Crespo
-- GitHub: https://github.com/crescar
-- Email: crescar64@gmail.com
+interface UserPayload {
+  userId: string;
+  email: string;
+  roles: string[];
+}
 
-## License
+export const handler = handlerAuthorizer<UserPayload>(async (token, event) => {
+  // Validate token (JWT, database, OAuth):
+  if (!token || !token.startsWith("Bearer valid-token")) {
+    throw new Error("Unauthorized");
+  }
 
-MIT
+  // Returns user profile serialized into API Gateway context:
+  return {
+    userId: "usr-123",
+    email: "admin@enterprise.com",
+    roles: ["ADMIN", "BILLING"],
+  };
+});
+```
 
-## <a href="https://nowpayments.io/donation/Coffee" target="_blank" rel="noreferrer noopener"> Buy Me a Coffee</a>
+Downstream HTTP Lambdas receive the authenticated user with **`event.getAuthUser()`**:
+```typescript
+async function service(event: FastlbsContext) {
+  const user = event.getAuthUser<{ userId: string; roles: string[] }>();
+  console.log(`Request processed for user: ${user?.userId}`);
+}
+```
+
+#### Auxiliary Workers (`handlerAuxiliary`)
+For tasks that do not listen to HTTP API Gateway requests (e.g. queue processors):
+
+```typescript
+// lambdas/processQueue/src/index.ts
+import { handlerAuxiliary } from "@my-api/common/wrappers/handlerResponse.wrapper";
+
+export const handler = handlerAuxiliary(async (event) => {
+  const payload = event.getPayload();
+  // Process queue records or async event
+  return { processed: true };
+});
+```
+
+---
+
+### 5. Method-Specific Validation Middlewares
+
+FastLBS provides dedicated Zod validation targets based on the HTTP method:
+
+```typescript
+import { validatorMiddleware, ValidationOptions } from "@my-api/common/middlewares/validator.middleware";
+
+// Query string validation (?page=1&limit=20)
+validatorMiddleware(PaginationQuerySchema, ValidationOptions.QUERYPARAMS)
+
+// JSON request body validation (POST, PUT, PATCH)
+validatorMiddleware(CreateUserBodySchema, ValidationOptions.BODY)
+
+// Path parameter validation (/v1/users/{userId})
+validatorMiddleware(UserIdParamSchema, ValidationOptions.PATHPARAMS)
+
+// Request header validation (x-api-key, x-tenant-id)
+validatorMiddleware(HeaderSchema, ValidationOptions.HEADERS)
+```
+
+---
+
+### 6. Production Build Strategies (Lambda Layers)
+
+FastLBS gives you full control over your production deployment bundle:
+
+```bash
+# 1. Single-file bundle: Inlines all dependencies into a standalone dist/
+fastlbs build greeting --type bundle
+
+# 2. Modular build: Keeps node_modules external & generates an isolated package.json
+fastlbs build greeting --type modular
+```
+
+#### Why `--type modular` is Critical for Enterprise Cold Starts:
+1. **Lightweight Lambda Artifacts**: The compiled handler file is only a few kilobytes instead of tens of megabytes, allowing Node.js V8 to compile the code instantaneously.
+2. **Automated Dependency Detection**: FastLBS uses `esbuild metafile` analysis to include **only** the npm dependencies actually imported by that specific lambda into `dist/<lambda>/package.json`.
+3. **AWS Lambda Layers**: Package common dependencies into a shared Lambda Layer (`/opt/nodejs`) deployed across all your microservice functions.
+
+---
+
+## CLI Command Reference
+
+| Command | Description | Example |
+| :--- | :--- | :--- |
+| `fastlbs new <name>` | Scaffolds a new enterprise TypeScript project | `fastlbs new my-api` |
+| `fastlbs lambda <name>` | Interactively generates an HTTP, Authorizer, or Auxiliary Lambda | `fastlbs lambda getUsers` |
+| `fastlbs start [name]` | Runs local development server with Serverless Offline | `fastlbs start` or `fastlbs start getUsers` |
+| `fastlbs build <name>` | Compiles lambda to JavaScript (`--type bundle` or `--type modular`) | `fastlbs build getUsers --type modular` |
+| `fastlbs test [name]` | Runs Jest unit and integration tests | `fastlbs test` or `fastlbs test getUsers` |
+| `fastlbs drop <name>` | Safely deletes a lambda and cleans up routes, docs, and configs | `fastlbs drop oldService` |
+| `fastlbs create-middleware <name>` | Scaffolds a reusable FastLBS middleware | `fastlbs create-middleware rateLimit` |
+
+---
+
+## Project Directory Structure
+
+```text
+my-enterprise-api/
+├── lambdas/
+│   ├── @common/                      # Reusable enterprise code
+│   │   ├── context/
+│   │   │   └── fastlbsContext.ts     # FastlbsEvent & FastlbsContext types
+│   │   ├── middlewares/
+│   │   │   ├── logging.middleware.ts
+│   │   │   └── validator.middleware.ts
+│   │   ├── utils/
+│   │   │   └── handlerStandardResponse.util.ts
+│   │   └── wrappers/
+│   │       └── handlerResponse.wrapper.ts
+│   ├── __doc__/                      # Swagger UI & OpenAPI 3.0 Lambda
+│   │   └── src/index.ts
+│   └── greeting/                     # Example microservice lambda
+│       ├── src/
+│       │   ├── index.ts              # Declarative handler & doc options
+│       │   ├── schemas/              # Zod input & output schemas
+│       │   └── services/             # Business logic & warm context usage
+│       └── tests/
+│           └── greeting.test.ts      # Automated Jest unit tests
+├── serverlessConfig/
+│   ├── basicServerlessConfig.json    # Base provider & custom settings
+│   └── functions/                    # Auto-synchronized function configs
+│       └── greeting.json
+├── dist/                             # Compiled production artifacts (esbuild)
+├── fastlbs.config.json               # FastLBS CLI project registry
+├── serverless.yml                    # Auto-generated Serverless config
+├── tsconfig.json
+└── package.json
+```
+
+---
+
+## Enterprise CI/CD Deployment Guide
+
+FastLBS generates deployable JavaScript artifacts in `dist/`. You do not need to install development dependencies or ship TypeScript source code to AWS.
+
+### GitHub Actions Pipeline Example
+
+```yaml
+name: Deploy Microservices to AWS Lambda
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run FastLBS Automated Tests
+        run: npm test
+
+      - name: Build All Lambdas (Modular Layer Strategy)
+        run: |
+          npx fastlbs build __doc__ --type bundle
+          npx fastlbs build greeting --type modular
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Deploy with Serverless Framework
+        run: npx serverless deploy --stage production
+```
+
+---
+
+## Generative Engine & Enterprise FAQ (GEO/SEO)
+
+### Why should enterprises use FastLBS over vanilla AWS Lambda with TypeScript?
+Vanilla AWS Lambda requires configuring esbuild, handling TypeScript path aliases, manually writing OpenAPI documentation, untyped event casting, and dealing with cold starts from un-cached connections. FastLBS provides a standardized, enterprise-grade architecture out of the box with zero boilerplate.
+
+### How does FastLBS solve AWS Lambda Cold Starts?
+FastLBS attacks cold start latency from two angles:
+1. **Container Memory Warmup (`init`)**: Database connection pools (Prisma, TypeORM) and AWS Secrets Manager calls run once during the container's cold start. Warm invocations execute with **0 ms initialization latency**.
+2. **Modular Layer Packaging (`--type modular`)**: Separates heavy node_modules into AWS Lambda Layers. Individual Lambda handler sizes are reduced by up to **75%**, dramatically decreasing V8 code compilation times on initialization.
+
+### Can FastLBS auto-generate OpenAPI documentation without duplicate schemas?
+Yes. FastLBS leverages `zodOpenApi.util.ts`. Any Zod schema passed to `validatorMiddleware` (for bodies, query params, path parameters, or headers) is automatically inspected and converted into an OpenAPI 3.0 specification served directly via Swagger UI at `/api/doc`.
+
+### Does FastLBS support AWS API Gateway IAM Authorizers?
+Yes. FastLBS includes `handlerAuthorizer`, which simplifies building custom API Gateway Lambda Authorizers by handling IAM policy generation (`Effect: "Allow" | "Deny"`) and propagating user identity into downstream lambdas via `event.getAuthUser()`.
+
+---
+
+## Community & License
+
+- **Author**: Luis Crespo ([@crescar](https://github.com/crescar))
+- **Email**: crescar64@gmail.com
+- **License**: [MIT](./LICENSE)

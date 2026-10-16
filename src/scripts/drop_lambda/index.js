@@ -6,88 +6,7 @@ import figlet from 'figlet';
 import { assertPathInsideProject, assertValidLambdaName } from '../../utils/cli_validation.js';
 import { getProjectRootOrThrow } from '../../utils/project_context.js';
 import { autoGenerateServerless } from '../serverless/index.js';
-
-function toDocConstName(lambdaName) {
-    const pascalName = lambdaName
-        .split(/[^a-zA-Z0-9]+/)
-        .filter(Boolean)
-        .map((part) => part[0].toUpperCase() + part.slice(1))
-        .join('');
-
-    return `${pascalName || lambdaName}Doc`;
-}
-
-function escapeRegExp(value) {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function findMatchingBrace(content, openBraceIndex) {
-    let depth = 0;
-    let inString = false;
-    let stringDelimiter = '';
-    let escaped = false;
-
-    for (let i = openBraceIndex; i < content.length; i++) {
-        const ch = content[i];
-
-        if (inString) {
-            if (escaped) {
-                escaped = false;
-                continue;
-            }
-            if (ch === '\\') {
-                escaped = true;
-                continue;
-            }
-            if (ch === stringDelimiter) {
-                inString = false;
-                stringDelimiter = '';
-            }
-            continue;
-        }
-
-        if (ch === '"' || ch === "'" || ch === '`') {
-            inString = true;
-            stringDelimiter = ch;
-            continue;
-        }
-
-        if (ch === '{') {
-            depth += 1;
-            continue;
-        }
-
-        if (ch === '}') {
-            depth -= 1;
-            if (depth === 0) {
-                return i;
-            }
-        }
-    }
-
-    return -1;
-}
-
-function removeDocFromPaths(indexContent, docConstName) {
-    const pathsMatch = indexContent.match(/["']?paths["']?\s*:\s*\{/m);
-    if (!pathsMatch || pathsMatch.index === undefined) {
-        return indexContent;
-    }
-
-    const openBraceIndex = pathsMatch.index + pathsMatch[0].lastIndexOf('{');
-    const closeBraceIndex = findMatchingBrace(indexContent, openBraceIndex);
-
-    if (closeBraceIndex === -1) {
-        return indexContent;
-    }
-
-    const pathsBody = indexContent.slice(openBraceIndex + 1, closeBraceIndex);
-    const escapedDocConstName = escapeRegExp(docConstName);
-    const spreadRegex = new RegExp(`(^\\s*\\.\\.\\.${escapedDocConstName}\\s*,?\\s*$\\n?)`, 'gm');
-    const cleanedBody = pathsBody.replace(spreadRegex, '');
-
-    return `${indexContent.slice(0, openBraceIndex + 1)}${cleanedBody}${indexContent.slice(closeBraceIndex)}`;
-}
+import { unregisterLambdaDoc } from '../../services/docs/doc_manager.js';
 
 function dropFastlbsConfig(projectRoot, lambdaName) {
     const configPath = path.join(projectRoot, 'fastlbs.config.json');
@@ -98,55 +17,6 @@ function dropFastlbsConfig(projectRoot, lambdaName) {
             delete config.lambdas[lambdaName];
             fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
         }
-    }
-}
-
-function dropDocumentation(projectRoot, lambdaName){
-    const docDir = path.join(projectRoot, 'lambdas/__doc__/src/documents/lambdas', lambdaName + '.ts');
-    if (fs.existsSync(docDir)) {
-        fs.rmSync(docDir, { force: true });
-    }
-    const indexPath = path.join(projectRoot, 'lambdas/__doc__/src/documents/index.ts');
-    if (fs.existsSync(indexPath)) {
-        let indexContent = fs.readFileSync(indexPath, 'utf-8');
-
-        const docConstName = toDocConstName(lambdaName);
-        const escapedDocConstName = escapeRegExp(docConstName);
-        const escapedLambdaName = escapeRegExp(lambdaName);
-
-        const importRegex = new RegExp(
-            `^\\s*import\\s+\\{\\s*${escapedDocConstName}\\s*\\}\\s+from\\s+["']\\.\\/lambdas\\/${escapedLambdaName}(?:\\.ts)?["'];?\\s*\\r?\\n?`,
-            'gm'
-        );
-        indexContent = indexContent.replace(importRegex, '');
-
-        const pathsArrayMatch = indexContent.match(/const\s+paths(?:\s*:[^=]+)?\s*=\s*\[/m);
-        if (pathsArrayMatch && pathsArrayMatch.index !== undefined) {
-            const openBracketIndex = pathsArrayMatch.index + pathsArrayMatch[0].lastIndexOf('[');
-            let depth = 0, closeBracketIndex = -1;
-            for (let i = openBracketIndex; i < indexContent.length; i++) {
-                if (indexContent[i] === '[') depth++;
-                else if (indexContent[i] === ']') {
-                    depth--;
-                    if (depth === 0) { closeBracketIndex = i; break; }
-                }
-            }
-            if (closeBracketIndex !== -1) {
-                let pathsBody = indexContent.slice(openBracketIndex + 1, closeBracketIndex);
-                // Remove the doc symbol (with or without trailing comma/whitespace)
-                const itemRegex = new RegExp(`(^|\\n)\\s*${escapedDocConstName}\\s*,?\\s*`, 'g');
-                pathsBody = pathsBody.replace(itemRegex, (match, p1) => p1);
-                pathsBody = pathsBody.replace(/,\\s*,/g, ',');
-                pathsBody = pathsBody.replace(/^\\s*,|,\\s*$/g, '');
-                indexContent = indexContent.slice(0, openBracketIndex + 1) + pathsBody + indexContent.slice(closeBracketIndex);
-            }
-        }
-
-        indexContent = removeDocFromPaths(indexContent, docConstName);
-        indexContent = indexContent.replace(/\n{3,}/g, '\n\n');
-        indexContent = indexContent.replace(/[ \t]+\n/g, '\n');
-        indexContent = indexContent.replace(/^\s*\n/, '');
-        fs.writeFileSync(indexPath, indexContent, 'utf-8');
     }
 }
 
@@ -167,6 +37,7 @@ export async function dropLambdaFunction(lambdaName) {
         message: pc.yellow(`Are you sure you want to drop the lambda "${lambdaName}"? This action cannot be undone.`),
         initial: false
     });
+
     if (!response.confirmDrop) {
         console.log(pc.yellow('Lambda drop cancelled.'));
         return;
@@ -180,20 +51,19 @@ export async function dropLambdaFunction(lambdaName) {
     }
 
     dropFastlbsConfig(projectRoot, lambdaName);
-    dropDocumentation(projectRoot, lambdaName);
+    unregisterLambdaDoc(projectRoot, lambdaName);
     dropServerlessConfig(projectRoot, lambdaName);
-    autoGenerateServerless()
+    autoGenerateServerless();
 
-    figlet.text('Lambda Dropped!', {
-        font: 'Standard',
-        horizontalLayout: 'default',
-        verticalLayout: 'default'
-    }, function(err, data) {
-        if (err) {
-            console.error('Something went wrong with figlet...');
-            console.dir(err);
-            return;
-        }
-        console.log(pc.green(data));
+    const figletText = await new Promise((resolve) => {
+        figlet('Lambda Dropped!', { font: 'Standard' }, (err, data) => {
+            if (err) {
+                resolve('Lambda Dropped!');
+                return;
+            }
+            resolve(data);
+        });
     });
+
+    console.log(pc.green(figletText));
 }

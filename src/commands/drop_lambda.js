@@ -1,11 +1,11 @@
 import { dropLambdaFunction } from "../scripts/drop_lambda/index.js";
 
-export function dropLambda(program) {
+export function registerDropCommand(program) {
     program
         .command('drop <lambda-name>')
-                .alias('remove')
-                .description('Remove a lambda from the project (code, config, docs, and serverless function)')
-                .addHelpText('after', `
+        .alias('remove')
+        .description('Remove a lambda from the project (code, config, docs, and serverless function)')
+        .addHelpText('after', `
 Examples:
     $ fastlbs drop greeting
     $ fastlbs remove users-create
@@ -14,3 +14,5 @@ Examples:
             await dropLambdaFunction(lambdaName);
         });
 }
+
+export { registerDropCommand as dropLambda };
