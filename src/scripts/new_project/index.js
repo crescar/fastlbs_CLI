@@ -8,6 +8,7 @@ import fs from 'fs';
 import { createBaseDoc } from "./services/create_base_doc.js";
 import { createBaseServerless } from "./services/create_base_serverless.js";
 import { createBaseContext } from "./services/create_base_context.js";
+import { createBaseI18n } from "./services/create_base_i18n.js";
 import { createBaseWrapper } from "./services/create_base_wrapper.js";
 import { createConfigurations } from "./services/create_configurations.js";
 import { folderStructure } from "./services/create_folder_structure.js";
@@ -48,6 +49,7 @@ export async function createProject(projectName) {
         progressBar.update(40);
 
         createBaseContext(projectName);
+        createBaseI18n(projectName);
         createBaseWrapper(projectName);
         createBaseMiddleware(projectName);
         createValidatorBaseMiddleware(projectName);

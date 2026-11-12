@@ -3,7 +3,8 @@ import path from 'path';
 
 export function createBaseContext(projectName) {
     const content =
-`import type {
+`/* @fastlbs-i18n v1 */
+import type {
   APIGatewayProxyEventV2,
   APIGatewayEventRequestContextV2,
 } from "aws-lambda";
@@ -19,6 +20,7 @@ export interface DefaultAuthUser {
   id?: string;
   email?: string;
   roles?: string[];
+  locale?: string;
   [key: string]: unknown;
 }
 
@@ -71,20 +73,34 @@ function extractAuthorizerContext<TAuth>(
   return cleaned as TAuth;
 }
 
+function fallbackInterpolate(
+  template: string,
+  params?: Record<string, unknown>
+): string {
+  if (!params || typeof params !== "object") return template;
+  return String(template).replace(/\\{\\{\\s*([a-zA-Z0-9_.-]+)\\s*\\}\\}/g, (match, token) => {
+    const val = params[token];
+    return val === undefined || val === null ? match : String(val);
+  });
+}
+
 /**
  * FastlbsEvent wraps and implements APIGatewayProxyEventV2 while embedding
  * cold-start initialized data (secrets, database clients, environment variables, etc.),
- * pre-authenticated user data (from Authorizer lambdas), and direct auxiliary payloads
- * with static TypeScript typing.
+ * pre-authenticated user data (from Authorizer lambdas), direct auxiliary payloads,
+ * and per-request i18n translation helpers with static TypeScript typing.
  */
 export class FastlbsEvent<
   TCustom = DefaultWarmContext,
-  TAuth = DefaultAuthUser
+  TAuth = DefaultAuthUser,
+  TI18nKey extends string = string
 > implements APIGatewayProxyEventV2 {
   public readonly rawEvent: APIGatewayProxyEventV2;
   public readonly custom: TCustom;
   public readonly auth: TAuth;
   public readonly payload: unknown;
+  public locale: string = "en";
+  private translateFn?: (key: string, params?: Record<string, unknown>) => string;
 
   // APIGatewayProxyEventV2 standard properties
   public readonly version: string;
@@ -132,6 +148,35 @@ export class FastlbsEvent<
         }
       }
     }
+  }
+
+  /**
+   * @internal Bound automatically by the FastLBS wrapper when HandlerOptions.i18n is configured.
+   */
+  public bindI18n(
+    locale: string,
+    translateFn: (key: string, params?: Record<string, unknown>) => string
+  ): void {
+    this.locale = locale;
+    this.translateFn = translateFn;
+  }
+
+  /**
+   * Translates a key into the negotiated request locale with optional variable interpolation
+   * and pluralization ({ count }). Falls back to the key itself when i18n is not configured.
+   */
+  public t(key: TI18nKey, params?: Record<string, unknown>): string {
+    if (this.translateFn) {
+      return this.translateFn(key, params);
+    }
+    return fallbackInterpolate(String(key), params);
+  }
+
+  /**
+   * Returns the negotiated locale for the current request (e.g. "en", "es").
+   */
+  public getLocale(): string {
+    return this.locale;
   }
 
   /**
@@ -198,12 +243,13 @@ export class FastlbsEvent<
 
 /**
  * FastlbsContext provides combined typed access:
- * \`event.custom.<prop>\`, \`event.<prop>\`, \`event.auth\`, and \`event.getAuthUser()\` are all fully typed.
+ * \`event.custom.<prop>\`, \`event.<prop>\`, \`event.auth\`, \`event.getAuthUser()\`, and \`event.t()\` are all fully typed.
  */
 export type FastlbsContext<
   TCustom = DefaultWarmContext,
-  TAuth = DefaultAuthUser
-> = FastlbsEvent<TCustom, TAuth> & TCustom;
+  TAuth = DefaultAuthUser,
+  TI18nKey extends string = string
+> = FastlbsEvent<TCustom, TAuth, TI18nKey> & TCustom;
 `;
 
     const contextDir = path.join(process.cwd(), `${projectName}/libs/common/context`);
@@ -213,4 +259,3 @@ export type FastlbsContext<
     const filePath = path.join(contextDir, 'fastlbsContext.ts');
     fs.writeFileSync(filePath, content.trimStart());
 }
-

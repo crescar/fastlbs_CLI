@@ -5,7 +5,15 @@ import fs from 'fs';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { nameToKebabCase, toPascalCase, toDocConstName } from '../src/utils/string_utils.js';
-import { assertValidLambdaName, assertValidProjectName, assertValidMiddlewareName } from '../src/utils/cli_validation.js';
+import {
+    assertValidLambdaName,
+    assertValidProjectName,
+    assertValidMiddlewareName,
+    normalizeLocaleTag,
+    assertValidLocale,
+    parseLocalesList,
+    localeToIdentifier,
+} from '../src/utils/cli_validation.js';
 import { addDocToPathsArray, removeDocFromPaths } from '../src/services/docs/doc_manager.js';
 import * as esbuild from 'esbuild';
 import { normalizeBuildType, extractUsedDependencies } from '../src/scripts/build/index.js';
@@ -16,6 +24,14 @@ import { createBaseMiddleware } from '../src/scripts/new_project/services/create
 import { createValidatorBaseMiddleware } from '../src/scripts/new_project/services/validator_base_middleware.js';
 import { createHandlerResponses } from '../src/scripts/new_project/services/create_handler_responses.js';
 import { createZodOpenApiUtil } from '../src/scripts/new_project/services/create_zod_openapi_util.js';
+import { createBaseI18n } from '../src/scripts/new_project/services/create_base_i18n.js';
+import {
+    scaffoldLambdaI18n,
+    patchHandlerWithI18n,
+    updateProjectDefaultLocale,
+    getProjectI18nConfig,
+} from '../src/services/i18n/i18n_scaffolder.js';
+import { checkProjectI18n } from '../src/services/i18n/i18n_checker.js';
 import {
     extractLambdaMetadataFromSource,
     syncLambdaFunctionConfig,
@@ -41,6 +57,7 @@ async function getGeneratedRuntime() {
         createValidatorBaseMiddleware(tempProjName);
         createBaseWrapper(tempProjName);
         createZodOpenApiUtil(tempProjName);
+        createBaseI18n(tempProjName);
 
         const entryFile = path.join(tempProjDir, 'runtime_entry.ts');
         fs.writeFileSync(
@@ -51,6 +68,7 @@ export * from "./libs/common/utils/handlerStandardResponse.util";
 export * from "./libs/common/wrappers/handlerResponse.wrapper";
 export * from "./libs/common/utils/zodOpenApi.util";
 export * from "./libs/common/middlewares/validator.middleware";
+export * from "./libs/common/i18n";
 `,
             'utf-8'
         );
@@ -1029,6 +1047,403 @@ test('createLambda and createFunction scaffold authorizer, auxiliary, and authen
         assert.match(getUsersIndex, /before:\s*\[authAuthorizer,\s*auditLogAuxiliary\]/);
         assert.match(getUsersService, /event\.getAuthUser/);
         assert.equal(getUsersFnConfig['getUsers'].events[0].http.authorizer.name, 'auth');
+    } finally {
+        fs.rmSync(tempProj, { recursive: true, force: true });
+    }
+});
+
+test('CLI registers i18n command and lambda i18n flags', () => {
+    const helpResult = runCli(['--help']);
+    assert.equal(helpResult.status, 0);
+    assert.match(helpResult.stdout, /i18n|localize/);
+
+    const i18nHelp = runCli(['i18n', '--help']);
+    assert.equal(i18nHelp.status, 0);
+    assert.match(i18nHelp.stdout, /--locales <locales>/);
+    assert.match(i18nHelp.stdout, /--default <locale>/);
+    assert.match(i18nHelp.stdout, /--all/);
+    assert.match(i18nHelp.stdout, /--check/);
+
+    const lambdaHelp = runCli(['lambda', '--help']);
+    assert.equal(lambdaHelp.status, 0);
+    assert.match(lambdaHelp.stdout, /--i18n/);
+    assert.match(lambdaHelp.stdout, /--no-i18n/);
+    assert.match(lambdaHelp.stdout, /--locales <locales>/);
+    assert.match(lambdaHelp.stdout, /--default-locale <locale>/);
+});
+
+test('Official IETF BCP 47 locale validation normalizes and rejects invalid tags', () => {
+    assert.equal(normalizeLocaleTag('en'), 'en');
+    assert.equal(normalizeLocaleTag('es_mx'), 'es-MX');
+    assert.equal(normalizeLocaleTag('PT-br'), 'pt-BR');
+    assert.equal(assertValidLocale('es-ES'), 'es-ES');
+    assert.deepEqual(parseLocalesList('en, es_mx, pt-BR, en'), ['en', 'es-MX', 'pt-BR']);
+    assert.equal(localeToIdentifier('pt-BR'), 'ptBR');
+    assert.equal(localeToIdentifier('es'), 'es');
+
+    assert.throws(() => assertValidLocale(''), { code: 'INVALID_LOCALE' });
+    assert.throws(() => assertValidLocale('not_a_valid_locale_12345'), { code: 'INVALID_LOCALE' });
+});
+
+test('Zero-dependency defineI18n engine resolves locales, fallbacks, interpolation, and plurals', async () => {
+    const { defineI18n, parseAcceptLanguage } = await getGeneratedRuntime();
+
+    // 1. Accept-Language q-weight parsing
+    const parsed = parseAcceptLanguage('fr-CH, fr;q=0.9, es-MX;q=0.8, en;q=0.7, *;q=0.5');
+    assert.deepEqual(parsed, ['fr-CH', 'fr', 'es-MX', 'en']);
+
+    // 2. defineI18n translation, fallback, interpolation & plurals
+    const i18n = defineI18n({
+        defaultLocale: 'en',
+        locales: {
+            en: {
+                greeting: 'Hello, {{name}}!',
+                nested: { welcome: 'Welcome to {{app}}' },
+                cart: {
+                    items_one: '{{count}} item in cart',
+                    items_other: '{{count}} items in cart',
+                },
+            },
+            es: {
+                greeting: '¡Hola, {{name}}!',
+                nested: { welcome: 'Bienvenido a {{app}}' },
+                cart: {
+                    items_one: '{{count}} artículo en el carrito',
+                    items_other: '{{count}} artículos en el carrito',
+                },
+            },
+        },
+    });
+
+    // Regional fallback: es-MX -> es
+    assert.equal(
+        i18n.resolveLocale({ headers: { 'accept-language': 'es-MX,es;q=0.9,en;q=0.8' } }),
+        'es'
+    );
+    // Priority 1: ?lang=en overrides Accept-Language: es
+    assert.equal(
+        i18n.resolveLocale({
+            queryStringParameters: { lang: 'en' },
+            headers: { 'accept-language': 'es' },
+        }),
+        'en'
+    );
+    // Priority 2: X-Locale header overrides Accept-Language
+    assert.equal(
+        i18n.resolveLocale({
+            headers: { 'x-locale': 'es', 'accept-language': 'en' },
+        }),
+        'es'
+    );
+    // Unsupported language falls back to defaultLocale ("en")
+    assert.equal(
+        i18n.resolveLocale({ headers: { 'accept-language': 'de-DE,de;q=0.9' } }),
+        'en'
+    );
+
+    // Interpolation & nested keys
+    const tEs = i18n.createTranslator('es');
+    assert.equal(tEs('greeting', { name: 'Luis' }), '¡Hola, Luis!');
+    assert.equal(tEs('nested.welcome', { app: 'FastLBS' }), 'Bienvenido a FastLBS');
+
+    // Pluralization via Intl.PluralRules
+    assert.equal(tEs('cart.items', { count: 1 }), '1 artículo en el carrito');
+    assert.equal(tEs('cart.items', { count: 5 }), '5 artículos en el carrito');
+
+    const tEn = i18n.createTranslator('en');
+    assert.equal(tEn('cart.items', { count: 1 }), '1 item in cart');
+    assert.equal(tEn('cart.items', { count: 3 }), '3 items in cart');
+});
+
+test('handlerResponse with i18n binds event.t(), adds Content-Language header, translates errors, and enriches OpenAPI', async () => {
+    const {
+        defineI18n,
+        handlerResponse,
+        HandlerStandardResponse,
+        HandlerErrorResponse,
+        extractOpenApiFromHandler,
+    } = await getGeneratedRuntime();
+
+    const i18n = defineI18n({
+        defaultLocale: 'en',
+        locales: {
+            en: {
+                greeting: 'Hello, {{name}}!',
+                errors: { forbiddenRole: 'Role {{role}} is not allowed' },
+            },
+            es: {
+                greeting: '¡Hola, {{name}}!',
+                errors: { forbiddenRole: 'El rol {{role}} no está permitido' },
+            },
+        },
+    });
+
+    const handler = handlerResponse(
+        {
+            i18n,
+            event: { method: 'GET', path: 'v1/greeting' },
+            doc: { summary: 'Localized greeting' },
+        },
+        async (event) => {
+            if (event.getQueryParam('fail') === 'true') {
+                throw HandlerErrorResponse.i18n(403, 'errors.forbiddenRole', { role: 'guest' });
+            }
+            const name = event.getQueryParam('name', 'World');
+            return new HandlerStandardResponse(200, {
+                message: event.t('common.success'),
+                status: 'success',
+                data: {
+                    locale: event.locale,
+                    greeting: event.t('greeting', { name }),
+                },
+            });
+        }
+    );
+
+    // 1. Default English request
+    const resEn = await handler({
+        queryStringParameters: { name: 'John' },
+        headers: {},
+    });
+    assert.equal(resEn.statusCode, 200);
+    assert.equal(resEn.headers['Content-Language'], 'en');
+    const bodyEn = JSON.parse(resEn.body);
+    assert.equal(bodyEn.message, 'Request successful');
+    assert.equal(bodyEn.data.locale, 'en');
+    assert.equal(bodyEn.data.greeting, 'Hello, John!');
+
+    // 2. Spanish request via Accept-Language: es-MX,es;q=0.9
+    const resEs = await handler({
+        queryStringParameters: { name: 'Luis' },
+        headers: { 'accept-language': 'es-MX,es;q=0.9' },
+    });
+    assert.equal(resEs.statusCode, 200);
+    assert.equal(resEs.headers['Content-Language'], 'es');
+    const bodyEs = JSON.parse(resEs.body);
+    assert.equal(bodyEs.message, 'Solicitud exitosa');
+    assert.equal(bodyEs.data.locale, 'es');
+    assert.equal(bodyEs.data.greeting, '¡Hola, Luis!');
+
+    // 3. Localized HandlerErrorResponse.i18n in Spanish
+    const errEs = await handler({
+        queryStringParameters: { fail: 'true' },
+        headers: { 'accept-language': 'es' },
+    });
+    assert.equal(errEs.statusCode, 403);
+    assert.equal(errEs.headers['Content-Language'], 'es');
+    const errBodyEs = JSON.parse(errEs.body);
+    assert.equal(errBodyEs.message, 'El rol guest no está permitido');
+
+    // 4. OpenAPI doc includes Accept-Language parameter and Content-Language response header
+    const openApiPaths = extractOpenApiFromHandler('greeting', handler);
+    const getOp = openApiPaths['/v1/greeting']?.get;
+    assert.ok(getOp);
+    const acceptLangParam = getOp.parameters?.find(
+        (p) => p.name === 'Accept-Language' && p.in === 'header'
+    );
+    assert.ok(acceptLangParam, 'Expected Accept-Language header parameter in OpenAPI');
+    assert.deepEqual(acceptLangParam.schema.enum, ['en', 'es']);
+    assert.equal(acceptLangParam.schema.default, 'en');
+    assert.ok(
+        getOp.responses['200']?.headers?.['Content-Language'],
+        'Expected Content-Language header in 200 OpenAPI response'
+    );
+});
+
+test('validatorMiddleware automatically translates default Zod errors and custom i18n keys per locale', async () => {
+    const {
+        defineI18n,
+        handlerResponse,
+        validatorMiddleware,
+        ValidationOptions,
+        HandlerStandardResponse,
+    } = await getGeneratedRuntime();
+
+    const i18n = defineI18n({
+        defaultLocale: 'en',
+        locales: {
+            en: {
+                validation: {
+                    customNameMin: 'Customer {{field}} must have at least {{minimum}} characters',
+                },
+            },
+            es: {
+                validation: {
+                    customNameMin: 'El campo {{field}} del cliente requiere mínimo {{minimum}} letras',
+                },
+            },
+        },
+    });
+
+    // Mock schema that emits both a custom i18n key issue and automatic Zod code issues
+    const mockBodySchema = {
+        safeParse(data) {
+            const issues = [];
+            if (!data.name || data.name.length < 3) {
+                issues.push({
+                    code: 'too_small',
+                    type: 'string',
+                    minimum: 3,
+                    path: ['name'],
+                    message: 'validation.customNameMin', // Custom i18n key
+                });
+            }
+            if (!data.email || !String(data.email).includes('@')) {
+                issues.push({
+                    code: 'invalid_string',
+                    validation: 'email',
+                    path: ['email'],
+                    message: 'Invalid email', // Default Zod message -> auto-translated via common.validation.zod.invalidEmail
+                });
+            }
+            if (typeof data.age !== 'number' || data.age < 18) {
+                issues.push({
+                    code: 'too_small',
+                    type: 'number',
+                    minimum: 18,
+                    path: ['age'],
+                    message: 'Number must be >= 18', // Default Zod message -> auto-translated via common.validation.zod.tooSmallNumber
+                });
+            }
+            if (issues.length > 0) {
+                return { success: false, error: { issues } };
+            }
+            return { success: true, data };
+        },
+    };
+
+    const handler = handlerResponse(
+        { i18n },
+        validatorMiddleware(mockBodySchema, ValidationOptions.BODY),
+        async () => new HandlerStandardResponse(200, { message: 'OK', status: 'success', data: {} })
+    );
+
+    // 1. Request in Spanish (Accept-Language: es)
+    const resEs = await handler({
+        headers: { 'accept-language': 'es' },
+        body: JSON.stringify({ name: 'Lu', email: 'not-an-email', age: 15 }),
+    });
+    assert.equal(resEs.statusCode, 400);
+    const bodyEs = JSON.parse(resEs.body);
+    assert.equal(bodyEs.message, 'Solicitud inválida');
+    assert.deepEqual(bodyEs.error, [
+        'name: El campo name del cliente requiere mínimo 3 letras',
+        'email: Correo electrónico inválido',
+        'age: Debe ser mayor o igual a 18',
+    ]);
+
+    // 2. Request in English (Accept-Language: en)
+    const resEn = await handler({
+        headers: { 'accept-language': 'en' },
+        body: JSON.stringify({ name: 'Lu', email: 'not-an-email', age: 15 }),
+    });
+    assert.equal(resEn.statusCode, 400);
+    const bodyEn = JSON.parse(resEn.body);
+    assert.equal(bodyEn.message, 'Invalid request');
+    assert.deepEqual(bodyEn.error, [
+        'name: Customer name must have at least 3 characters',
+        'email: Invalid email address',
+        'age: Must be greater than or equal to 18',
+    ]);
+});
+
+test('createLambda with i18n, patchHandlerWithI18n on existing lambda, updateProjectDefaultLocale, and checkProjectI18n', () => {
+    const tempProj = fs.mkdtempSync(path.join(repoRoot, 'temp-i18n-test-'));
+    try {
+        fs.writeFileSync(
+            path.join(tempProj, 'fastlbs.config.json'),
+            JSON.stringify(
+                {
+                    name: 'i18n-test-api',
+                    defaultLocale: 'en',
+                    i18n: {
+                        defaultLocale: 'en',
+                        locales: ['en', 'es'],
+                        enabledByDefault: false,
+                    },
+                    lambdas: {},
+                },
+                null,
+                2
+            ),
+            'utf-8'
+        );
+
+        // 1. Create a lambda with i18n enabled directly
+        createLambda('greeting', 'v1/greeting', 'GET', {
+            rootDir: tempProj,
+            i18n: { defaultLocale: 'en', locales: ['en', 'es'] },
+        });
+
+        const greetingIndex = fs.readFileSync(
+            path.join(tempProj, 'lambdas', 'greeting', 'src', 'index.ts'),
+            'utf-8'
+        );
+        const greetingService = fs.readFileSync(
+            path.join(tempProj, 'lambdas', 'greeting', 'src', 'services', 'index.ts'),
+            'utf-8'
+        );
+        const greetingSpec = fs.readFileSync(
+            path.join(tempProj, 'lambdas', 'greeting', '__tests__', 'index.spec.ts'),
+            'utf-8'
+        );
+        assert.match(greetingIndex, /import \{ i18n \} from "\.\/i18n"/);
+        assert.match(greetingIndex, /i18n,/);
+        assert.match(greetingService, /event\.t\("greeting", \{ name \}\)/);
+        assert.match(greetingSpec, /accept-language/);
+
+        // 2. Create a lambda WITHOUT i18n, then retrofit it with scaffoldLambdaI18n + patchHandlerWithI18n
+        createLambda('orders', 'v1/orders', 'POST', { rootDir: tempProj });
+        const ordersIndexPath = path.join(tempProj, 'lambdas', 'orders', 'src', 'index.ts');
+        assert.doesNotMatch(fs.readFileSync(ordersIndexPath, 'utf-8'), /from "\.\/i18n"/);
+
+        const scaffolded = scaffoldLambdaI18n(tempProj, 'orders', {
+            locales: ['en', 'es', 'pt-BR'],
+            defaultLocale: 'es',
+        });
+        assert.deepEqual(scaffolded.locales, ['es', 'en', 'pt-BR']);
+        const patch1 = patchHandlerWithI18n(ordersIndexPath);
+        assert.equal(patch1.patched, true);
+        // Idempotent second call
+        const patch2 = patchHandlerWithI18n(ordersIndexPath);
+        assert.equal(patch2.patched, false);
+        assert.equal(patch2.reason, 'already_configured');
+
+        const ordersIndexAfter = fs.readFileSync(ordersIndexPath, 'utf-8');
+        assert.match(ordersIndexAfter, /import \{ i18n \} from "\.\/i18n"/);
+        assert.match(ordersIndexAfter, /i18n,/);
+
+        // 3. Update project default locale in fastlbs.config.json
+        updateProjectDefaultLocale(tempProj, 'es', ['es', 'en', 'pt-BR']);
+        const updatedCfg = getProjectI18nConfig(tempProj);
+        assert.equal(updatedCfg.defaultLocale, 'es');
+        assert.deepEqual(updatedCfg.locales, ['es', 'en', 'pt-BR']);
+
+        // 4. checkProjectI18n passes when all locales match
+        const checkPass = checkProjectI18n(tempProj);
+        assert.equal(checkPass.ok, true);
+        assert.equal(checkPass.checked, 2);
+
+        // 5. Introduce a missing key and mismatched placeholder in orders/en.json -> checkProjectI18n catches both
+        const ordersEnPath = path.join(
+            tempProj,
+            'lambdas',
+            'orders',
+            'src',
+            'i18n',
+            'locales',
+            'en.json'
+        );
+        fs.writeFileSync(
+            ordersEnPath,
+            JSON.stringify({ greeting: 'Hello {{wrongVar}}!' }, null, 2),
+            'utf-8'
+        );
+
+        const checkFail = checkProjectI18n(tempProj, 'orders');
+        assert.equal(checkFail.ok, false);
+        assert.ok(checkFail.results[0].issues.some((i) => i.type === 'MISSING_KEY'));
+        assert.ok(checkFail.results[0].issues.some((i) => i.type === 'MISMATCHED_PLACEHOLDERS'));
     } finally {
         fs.rmSync(tempProj, { recursive: true, force: true });
     }

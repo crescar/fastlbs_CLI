@@ -132,6 +132,12 @@ function createFastLbsConfig(projectName) {
     const content = {
         "service": projectName,
         "frameworkVersion": "1",
+        "defaultLocale": "en",
+        "i18n": {
+            "defaultLocale": "en",
+            "locales": ["en", "es"],
+            "enabledByDefault": false,
+        },
         "lambdas": {},
     };
     const filePath = path.join(process.cwd(), projectName, 'fastlbs.config.json');

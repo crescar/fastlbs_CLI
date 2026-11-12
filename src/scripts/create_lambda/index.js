@@ -11,8 +11,67 @@ import { createFunction } from './services/create_function.js';
 import { autoGenerateServerless } from '../serverless/index.js';
 import { assertValidLambdaName } from '../../utils/cli_validation.js';
 import { FastlbsError } from '../../utils/cli_error.js';
+import { findProjectRoot } from '../../utils/project_context.js';
+import {
+    getProjectI18nConfig,
+    resolveI18nSettings,
+    ensureProjectI18nSupport,
+} from '../../services/i18n/i18n_scaffolder.js';
 
-export async function createLambdaFunction(lambdaName) {
+async function promptOrResolveI18n(projectRoot, cliOptions = {}) {
+    const projectI18n = getProjectI18nConfig(projectRoot);
+
+    // If --no-i18n was passed explicitly (`cliOptions.i18n === false`)
+    if (cliOptions.i18n === false) {
+        return null;
+    }
+
+    let enableI18n = Boolean(cliOptions.i18n || cliOptions.locales || cliOptions.defaultLocale);
+
+    if (!enableI18n && cliOptions.i18n === undefined) {
+        const { wantI18n } = await enquirer.prompt([
+            {
+                type: 'confirm',
+                name: 'wantI18n',
+                message: 'Enable i18n (multi-language responses) for this lambda?',
+                initial: Boolean(projectI18n.enabledByDefault),
+            },
+        ]);
+        enableI18n = Boolean(wantI18n);
+    }
+
+    if (!enableI18n) {
+        return null;
+    }
+
+    let rawLocales = cliOptions.locales;
+    if (!rawLocales) {
+        const { localesInput } = await enquirer.prompt([
+            {
+                type: 'input',
+                name: 'localesInput',
+                message: 'Supported locales (comma-separated IETF BCP 47 tags):',
+                initial: projectI18n.locales.join(','),
+            },
+        ]);
+        rawLocales = localesInput || projectI18n.locales.join(',');
+    }
+
+    const i18nConfig = resolveI18nSettings(projectRoot, {
+        locales: rawLocales,
+        defaultLocale: cliOptions.defaultLocale,
+    });
+
+    await ensureProjectI18nSupport(projectRoot, {
+        locales: i18nConfig.locales,
+        defaultLocale: i18nConfig.defaultLocale,
+        interactive: true,
+    });
+
+    return i18nConfig;
+}
+
+export async function createLambdaFunction(lambdaName, cliOptions = {}) {
     assertValidLambdaName(lambdaName);
 
     const { fileNotFound, exists } = existLambda(lambdaName);
@@ -29,6 +88,8 @@ export async function createLambdaFunction(lambdaName) {
             hint: `Use "fastlbs drop ${lambdaName}" first if you want to replace it.`,
         });
     }
+
+    const projectRoot = findProjectRoot() || process.cwd();
 
     const { lambdaKind } = await enquirer.prompt([
         {
@@ -59,8 +120,14 @@ export async function createLambdaFunction(lambdaName) {
     const kind = Array.isArray(lambdaKind) ? lambdaKind[0] : lambdaKind;
 
     if (kind === 'authorizer' || kind === 'auxiliary') {
-        createLambda(lambdaName, null, null, { kind });
-        updateFastLbsConfigJson(lambdaName, kind);
+        const i18nConfig = await promptOrResolveI18n(projectRoot, cliOptions);
+
+        createLambda(lambdaName, null, null, { kind, i18n: i18nConfig });
+        updateFastLbsConfigJson(
+            lambdaName,
+            kind,
+            i18nConfig ? { i18n: i18nConfig } : {}
+        );
         createFunction(lambdaName, null, null, { kind });
         autoGenerateServerless();
 
@@ -73,6 +140,13 @@ export async function createLambdaFunction(lambdaName) {
         console.log(pc.cyan(`  Handler: lambdas/${lambdaName}/src/index.ts`));
         console.log(pc.cyan(`  Schemas: lambdas/${lambdaName}/src/schemas/index.ts`));
         console.log(pc.cyan(`  Service: lambdas/${lambdaName}/src/services/index.ts`));
+        if (i18nConfig) {
+            console.log(
+                pc.cyan(
+                    `  i18n:    lambdas/${lambdaName}/src/i18n/index.ts (${i18nConfig.locales.join(', ')}, default: ${i18nConfig.defaultLocale})`
+                )
+            );
+        }
         if (kind === 'authorizer') {
             console.log(
                 pc.yellow(
@@ -150,6 +224,7 @@ export async function createLambdaFunction(lambdaName) {
     }
 
     const response = await enquirer.prompt(httpQuestions);
+    const i18nConfig = await promptOrResolveI18n(projectRoot, cliOptions);
 
     const { methods, version, selectedAuthorizer, selectedAuxiliary } = response;
     let { route } = response;
@@ -168,8 +243,13 @@ export async function createLambdaFunction(lambdaName) {
         kind: 'http',
         authorizer,
         beforeAux,
+        i18n: i18nConfig,
     });
-    updateFastLbsConfigJson(lambdaName, 'http');
+    updateFastLbsConfigJson(
+        lambdaName,
+        'http',
+        i18nConfig ? { i18n: i18nConfig } : {}
+    );
 
     createFunction(lambdaName, fullPath, method, {
         kind: 'http',
@@ -183,6 +263,13 @@ export async function createLambdaFunction(lambdaName) {
     console.log(pc.cyan(`  Schemas: lambdas/${lambdaName}/src/schemas/index.ts`));
     console.log(pc.cyan(`  Service: lambdas/${lambdaName}/src/services/index.ts`));
     console.log(pc.cyan(`  Route:   [${method.toUpperCase()}] /${version}${route}`));
+    if (i18nConfig) {
+        console.log(
+            pc.cyan(
+                `  i18n:    lambdas/${lambdaName}/src/i18n/index.ts (${i18nConfig.locales.join(', ')}, default: ${i18nConfig.defaultLocale})`
+            )
+        );
+    }
     if (authorizer) {
         console.log(pc.cyan(`  Auth:    Protected by Authorizer Lambda "${authorizer}"`));
     }
