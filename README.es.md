@@ -64,6 +64,7 @@ FastLBS resuelve estos problemas de forma nativa al integrar **compilación inst
   - [4. Lambdas Autorizadoras y Auxiliares de Propósito General](#4-lambdas-autorizadoras-y-auxiliares-de-propósito-general)
   - [5. Middlewares de Validación según Método HTTP](#5-middlewares-de-validación-según-método-http)
   - [6. Estrategias de Compilación para Producción (Capas Lambda)](#6-estrategias-de-compilación-para-producción-capas-lambda)
+  - [7. Internacionalización (i18n) Nativa sin Dependencias](#7-internacionalización-i18n-nativa-sin-dependencias)
 - [Referencia de Comandos CLI](#referencia-de-comandos-cli)
 - [Estructura del Proyecto](#estructura-del-proyecto)
 - [Guía de Despliegue en CI/CD Empresarial](#guía-de-despliegue-en-cicd-empresarial)
@@ -394,12 +395,305 @@ fastlbs build saludo --type modular
 
 ---
 
+### 7. Internacionalización (i18n) Nativa sin Dependencias
+
+FastLBS incorpora un motor de internacionalización (i18n) ultraligero y sin dependencias externas, basado en las APIs nativas `Intl` de Node.js (`Intl.PluralRules`, `Intl.NumberFormat`, `Intl.DateTimeFormat` y etiquetas oficiales IETF BCP 47).
+
+- **Al Crear una Lambda**: Actívalo con `--i18n` (o desde el asistente interactivo) al ejecutar `fastlbs lambda <nombre>`.
+- **En Lambdas Existentes**: Ejecuta `fastlbs i18n <nombre> --locales en,es,pt-BR` para generar `src/i18n/index.ts`, `src/i18n/locales/*.json` y conectar `i18n` automáticamente en `handlerResponse`.
+- **Idioma por Defecto de la App**: Configura `"defaultLocale": "en"` e `"i18n": { "defaultLocale": "en", "locales": ["en", "es"], "enabledByDefault": false }` en `fastlbs.config.json`, o actualízalo con `fastlbs i18n --default es`.
+- **Negociación Automática de Idioma**: Detecta el idioma por petición desde `?lang=` -> `X-Lang` / `X-Locale` -> `Accept-Language` (con pesos `q=` y fallback regional `es-MX` -> `es` -> `en`) -> `event.auth.locale` -> `defaultLocale`.
+- **Tipado Estricto en `event.t()` y Errores Traducidos**: Autocompletado de claves, interpolación `{{variable}}`, plurales `_one` / `_other`, traducción automática de `HandlerErrorResponse.i18n(...)` y errores de validación Zod, además de cabecera `Content-Language` y documentación automática en OpenAPI.
+
+```bash
+# Crear una nueva lambda con soporte i18n
+fastlbs lambda saludo --i18n --locales en,es
+
+# Agregar i18n (o nuevos idiomas) a una lambda existente
+fastlbs i18n saludo --locales en,es,pt-BR
+
+# Cambiar el idioma por defecto del proyecto en fastlbs.config.json
+fastlbs i18n --default es
+
+# Verificar consistencia de claves y {{placeholders}} en todas las lambdas
+fastlbs i18n --check
+```
+
+#### Archivos de Traducción (`src/i18n/locales/*.json`)
+
+```json
+// lambdas/pedidos/src/i18n/locales/en.json
+{
+  "greeting": "Hello, {{name}}!",
+  "searchResult": "Found results for '{{query}}' on page {{page}}",
+  "orderById": "Order #{{orderId}} retrieved successfully",
+  "orderCreated_one": "Order created for {{customer}} with {{count}} item",
+  "orderCreated_other": "Order created for {{customer}} with {{count}} items",
+  "errors": {
+    "orderNotFound": "Order '{{orderId}}' was not found",
+    "invalidQuantity": "Quantity {{count}} is not valid for {{customer}}"
+  }
+}
+```
+
+```json
+// lambdas/pedidos/src/i18n/locales/es.json
+{
+  "greeting": "¡Hola, {{name}}!",
+  "searchResult": "Resultados encontrados para '{{query}}' en la página {{page}}",
+  "orderById": "Pedido #{{orderId}} obtenido exitosamente",
+  "orderCreated_one": "Pedido creado para {{customer}} con {{count}} artículo",
+  "orderCreated_other": "Pedido creado para {{customer}} con {{count}} artículos",
+  "errors": {
+    "orderNotFound": "El pedido '{{orderId}}' no fue encontrado",
+    "invalidQuantity": "La cantidad {{count}} no es válida para {{customer}}"
+  }
+}
+```
+
+---
+
+#### Ejemplo A: `GET` con `QueryParams` (`?query=zapatos&page=1&lang=es`)
+
+```typescript
+// 1. lambdas/buscarPedidos/src/schemas/index.ts
+import { z } from "zod";
+
+export const BuscarPedidosQuerySchema = z.object({
+  query: z.string().min(1).describe("Término de búsqueda").meta({ example: "laptop" }),
+  page: z.string().optional().describe("Número de página").meta({ example: "1" }),
+});
+
+// 2. lambdas/buscarPedidos/src/services/index.ts
+import { HandlerStandardResponse } from "@my-api/common/utils/handlerStandardResponse.util";
+import type { FastlbsContext, DefaultWarmContext, DefaultAuthUser } from "@my-api/common/context/fastlbsContext";
+import type { I18nKey } from "../i18n";
+
+export async function service(
+  event: FastlbsContext<DefaultWarmContext, DefaultAuthUser, I18nKey>
+) {
+  const query = event.getQueryParam("query", "todos");
+  const page = event.getQueryParam("page", "1");
+
+  return new HandlerStandardResponse(200, {
+    message: event.t("common.success"), // "Request successful" | "Solicitud exitosa"
+    status: "success",
+    data: {
+      locale: event.locale,
+      resumen: event.t("searchResult", { query, page }),
+    },
+  });
+}
+
+// 3. lambdas/buscarPedidos/src/index.ts
+import { handlerResponse } from "@my-api/common/wrappers/handlerResponse.wrapper";
+import { validatorMiddleware, ValidationOptions } from "@my-api/common/middlewares/validator.middleware";
+import { BuscarPedidosQuerySchema } from "./schemas";
+import { service } from "./services";
+import { i18n } from "./i18n";
+
+export const handler = handlerResponse(
+  {
+    i18n,
+    event: { method: "GET", path: "v1/pedidos/buscar", cors: true },
+    doc: { summary: "Buscar pedidos con respuesta multi-idioma", tags: ["PEDIDOS"] },
+  },
+  validatorMiddleware(BuscarPedidosQuerySchema, ValidationOptions.QUERYPARAMS),
+  service
+);
+```
+
+---
+
+#### Ejemplo B: `GET` con Parámetros de URL (`urlParams` / `PathParams`: `/v1/pedidos/{orderId}`) y Errores Localizados
+
+```typescript
+// 1. lambdas/obtenerPedidoPorId/src/schemas/index.ts
+import { z } from "zod";
+
+export const PedidoPathParamsSchema = z.object({
+  orderId: z.string().min(1).describe("ID del pedido en la URL").meta({ example: "ord_900" }),
+});
+
+// 2. lambdas/obtenerPedidoPorId/src/services/index.ts
+import { HandlerStandardResponse } from "@my-api/common/utils/handlerStandardResponse.util";
+import { HandlerErrorResponse } from "@my-api/common/utils/handlerErrorResponse.util";
+import type { FastlbsContext, DefaultWarmContext, DefaultAuthUser } from "@my-api/common/context/fastlbsContext";
+import type { I18nKey } from "../i18n";
+
+export async function service(
+  event: FastlbsContext<DefaultWarmContext, DefaultAuthUser, I18nKey>
+) {
+  const orderId = event.getPathParam("orderId", "");
+
+  // Lanza un error 404 traducido automáticamente según el idioma de la petición:
+  if (orderId === "no-existe") {
+    throw HandlerErrorResponse.i18n(404, "errors.orderNotFound", { orderId });
+  }
+
+  return new HandlerStandardResponse(200, {
+    message: event.t("common.success"),
+    status: "success",
+    data: {
+      orderId,
+      detalle: event.t("orderById", { orderId }),
+    },
+  });
+}
+
+// 3. lambdas/obtenerPedidoPorId/src/index.ts
+export const handler = handlerResponse(
+  {
+    i18n,
+    event: { method: "GET", path: "v1/pedidos/{orderId}", cors: true },
+    doc: { summary: "Obtener pedido por parámetro de URL con i18n", tags: ["PEDIDOS"] },
+  },
+  validatorMiddleware(PedidoPathParamsSchema, ValidationOptions.PATHPARAMS),
+  service
+);
+```
+
+---
+
+#### Ejemplo C: `POST` con `Body`, Parámetros de URL (`urlParams` / `PathParams`) y Pluralización (`_one` / `_other`)
+
+```typescript
+// 1. lambdas/crearPedido/src/schemas/index.ts
+import { z } from "zod";
+
+export const ClientePathSchema = z.object({
+  customerId: z.string().describe("ID del cliente en la URL").meta({ example: "cust_42" }),
+});
+
+export const CrearPedidoBodySchema = z.object({
+  customer: z.string().min(2).describe("Nombre completo del cliente").meta({ example: "Luis Crespo" }),
+  itemsCount: z.number().int().positive().describe("Cantidad de artículos").meta({ example: 3 }),
+});
+
+export type CrearPedidoBody = z.infer<typeof CrearPedidoBodySchema>;
+
+// 2. lambdas/crearPedido/src/services/index.ts
+import { HandlerStandardResponse } from "@my-api/common/utils/handlerStandardResponse.util";
+import { HandlerErrorResponse } from "@my-api/common/utils/handlerErrorResponse.util";
+import type { FastlbsContext, DefaultWarmContext, DefaultAuthUser } from "@my-api/common/context/fastlbsContext";
+import type { CrearPedidoBody } from "../schemas";
+import type { I18nKey } from "../i18n";
+
+export async function service(
+  event: FastlbsContext<DefaultWarmContext, DefaultAuthUser, I18nKey>
+) {
+  const customerId = event.getPathParam("customerId", "cust_default");
+  const body = event.getJsonBody<CrearPedidoBody>();
+  const customer = body?.customer ?? "Invitado";
+  const count = body?.itemsCount ?? 1;
+
+  if (count > 100) {
+    throw HandlerErrorResponse.i18n(400, "errors.invalidQuantity", { count, customer });
+  }
+
+  return new HandlerStandardResponse(201, {
+    message: event.t("common.success"),
+    status: "success",
+    data: {
+      customerId,
+      // Selecciona automáticamente "orderCreated_one" (count = 1) u "orderCreated_other" (count > 1):
+      confirmacion: event.t("orderCreated", { customer, count }),
+    },
+  });
+}
+
+// 3. lambdas/crearPedido/src/index.ts
+export const handler = handlerResponse(
+  {
+    i18n,
+    event: {
+      method: "POST",
+      path: "v1/clientes/{customerId}/pedidos",
+      cors: true,
+    },
+    doc: { summary: "Crear pedido validando Body y URL con respuestas y errores en múltiples idiomas", tags: ["PEDIDOS"] },
+  },
+  validatorMiddleware(ClientePathSchema, ValidationOptions.PATHPARAMS),
+  validatorMiddleware(CrearPedidoBodySchema, ValidationOptions.BODY),
+  service
+);
+```
+
+#### Cómo Invocar los Endpoints Multi-Idioma (`Accept-Language`, `X-Lang` o `?lang=`)
+
+```bash
+# 1. Mediante cabecera estándar Accept-Language (con fallback regional es-MX -> es)
+curl -X GET "http://localhost:3000/v1/pedidos/ord_900" \
+  -H "Accept-Language: es-MX,es;q=0.9,en;q=0.8"
+
+# 2. Mediante QueryParam (?lang=es) en una petición GET con QueryParams
+curl -X GET "http://localhost:3000/v1/pedidos/buscar?query=teclado&page=2&lang=es"
+
+# 3. Mediante POST enviando Body JSON + urlParam + cabecera X-Lang
+curl -X POST "http://localhost:3000/v1/clientes/cust_42/pedidos" \
+  -H "Content-Type: application/json" \
+  -H "X-Lang: es" \
+  -d '{"customer": "Luis Crespo", "itemsCount": 3}'
+```
+
+---
+
+#### Traducción Automática y Personalización de Errores de Zod
+
+Cuando `i18n` está habilitado en una lambda, `validatorMiddleware` traduce los errores de validación de Zod en **dos niveles**:
+
+1. **Traducción Automática sin Configuración**: Las validaciones estándar de Zod (`z.string()`, `.email()`, `.uuid()`, `.url()`, `.min()`, `.max()`, `z.enum()`) se traducen automáticamente al idioma activo de la petición usando el catálogo `common.validation.zod.*` de `libs/common/i18n/locales/{en,es}.json` (el cual también puedes personalizar globalmente).
+2. **Mensajes Personalizados por Campo con Claves i18n**: Pasa cualquier clave de tu archivo `locales/*.json` como mensaje en el esquema Zod (por ejemplo, `.min(3, "validation.customerMinLength")`). `validatorMiddleware` interpola automáticamente `{{field}}`, `{{minimum}}`, `{{maximum}}`, `{{expected}}`, `{{received}}` y `{{options}}`.
+
+```typescript
+// 1. lambdas/crearPedido/src/schemas/index.ts
+import { z } from "zod";
+
+export const CrearPedidoBodySchema = z.object({
+  // Clave i18n personalizada definida en lambdas/crearPedido/src/i18n/locales/*.json:
+  customer: z.string({ message: "validation.customerRequired" })
+             .min(3, "validation.customerMinLength"),
+
+  // Reglas estándar de Zod (¡se traducen automáticamente sin escribir mensajes!):
+  email: z.string().email(),
+  itemsCount: z.number().int().min(1),
+  priority: z.enum(["normal", "express"]),
+});
+```
+
+```json
+// 2. lambdas/crearPedido/src/i18n/locales/es.json
+{
+  "validation": {
+    "customerRequired": "El nombre del cliente ({{field}}) es obligatorio",
+    "customerMinLength": "El campo '{{field}}' debe tener al menos {{minimum}} letras"
+  }
+}
+```
+
+```json
+// 3. Respuesta 400 automática cuando se invoca con Accept-Language: es
+// POST /v1/clientes/cust_42/pedidos  ->  { "customer": "Lu", "email": "mal", "itemsCount": 0, "priority": "vip" }
+{
+  "message": "Solicitud inválida",
+  "error": [
+    "customer: El campo 'customer' debe tener al menos 3 letras",
+    "email: Correo electrónico inválido",
+    "itemsCount: Debe ser mayor o igual a 1",
+    "priority: Valor inválido. Se esperaba uno de: normal, express"
+  ]
+}
+```
+
+---
+
 ## Referencia de Comandos CLI
 
 | Comando | Descripción | Ejemplo de Uso |
 | :--- | :--- | :--- |
 | `fastlbs new <nombre>` | Crea un nuevo proyecto empresarial con TypeScript | `fastlbs new mi-api` |
-| `fastlbs lambda <nombre>` | Asistente interactivo para lambdas HTTP, Autorizadoras o Auxiliares | `fastlbs lambda obtenerUsuarios` |
+| `fastlbs lambda <nombre>` | Asistente interactivo para lambdas HTTP, Autorizadoras o Auxiliares (soporta `--i18n`) | `fastlbs lambda obtenerUsuarios --i18n` |
+| `fastlbs i18n [nombre]` | Agrega, actualiza o valida (`--check`) traducciones i18n nativas en una lambda o proyecto | `fastlbs i18n obtenerUsuarios --locales en,es` |
 | `fastlbs start [nombre]` | Inicia el servidor de desarrollo local con Serverless Offline | `fastlbs start` o `fastlbs start obtenerUsuarios` |
 | `fastlbs build <nombre>` | Compila a JavaScript (`--type bundle` o `--type modular`) | `fastlbs build obtenerUsuarios --type modular` |
 | `fastlbs test [nombre]` | Ejecuta pruebas unitarias y de integración con Jest | `fastlbs test` o `fastlbs test obtenerUsuarios` |
@@ -412,26 +706,32 @@ fastlbs build saludo --type modular
 
 ```text
 mi-api-empresarial/
+├── libs/common/                      # Código y utilidades compartidas (@mi-api/common)
+│   ├── context/
+│   │   └── fastlbsContext.ts         # Tipos de FastlbsEvent y FastlbsContext
+│   ├── i18n/
+│   │   ├── index.ts                  # Motor nativo defineI18n sin dependencias
+│   │   └── locales/{en,es}.json      # Traducciones comunes compartidas
+│   ├── middlewares/
+│   │   ├── logging.middleware.ts
+│   │   └── validator.middleware.ts
+│   ├── utils/
+│   │   └── handlerStandardResponse.util.ts
+│   └── wrappers/
+│       └── handlerResponse.wrapper.ts
 ├── lambdas/
-│   ├── @common/                      # Código y utilidades compartidas
-│   │   ├── context/
-│   │   │   └── fastlbsContext.ts     # Tipos de FastlbsEvent y FastlbsContext
-│   │   ├── middlewares/
-│   │   │   ├── logging.middleware.ts
-│   │   │   └── validator.middleware.ts
-│   │   ├── utils/
-│   │   │   └── handlerStandardResponse.util.ts
-│   │   └── wrappers/
-│   │       └── handlerResponse.wrapper.ts
 │   ├── __doc__/                      # Lambda de Swagger UI y OpenAPI 3.0
 │   │   └── src/index.ts
 │   └── saludo/                       # Microservicio de ejemplo
 │       ├── src/
 │       │   ├── index.ts              # Declaración de handler y opciones
+│       │   ├── i18n/                 # Catálogo opcional de traducciones por lambda
+│       │   │   ├── index.ts
+│       │   │   └── locales/{en,es}.json
 │       │   ├── schemas/              # Esquemas Zod de entrada y salida
 │       │   └── services/             # Lógica de negocio y contexto warm
-│       └── tests/
-│           └── saludo.test.ts        # Pruebas unitarias automatizadas
+│       └── __tests__/
+│           └── index.spec.ts         # Pruebas unitarias automatizadas
 ├── serverlessConfig/
 │   ├── basicServerlessConfig.json    # Configuración base del proveedor
 │   └── functions/                    # Configuraciones sincronizadas por función

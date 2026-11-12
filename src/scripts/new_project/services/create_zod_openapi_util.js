@@ -284,6 +284,15 @@ export function extractOpenApiFromHandler(
   const parameters: Array<Record<string, any>> = [];
   let requestBody: Record<string, any> | undefined;
 
+  const i18nMeta =
+    metadata.i18n ||
+    (options.i18n && Array.isArray(options.i18n.locales)
+      ? {
+          defaultLocale: options.i18n.defaultLocale || options.i18n.locales[0] || "en",
+          locales: options.i18n.locales,
+        }
+      : undefined);
+
   for (const validator of validators) {
     if (!validator || !validator.schema) continue;
 
@@ -314,6 +323,27 @@ export function extractOpenApiFromHandler(
         parameters.push(...zodToOpenApiParameters(validator.schema, "header"));
         break;
       }
+    }
+  }
+
+  if (i18nMeta && Array.isArray(i18nMeta.locales) && i18nMeta.locales.length > 0) {
+    const hasAcceptLang = parameters.some(
+      (p) => p.in === "header" && String(p.name).toLowerCase() === "accept-language"
+    );
+    if (!hasAcceptLang) {
+      parameters.push({
+        name: "Accept-Language",
+        in: "header",
+        required: false,
+        description: \`Preferred response locale (BCP 47). Supported locales: \${i18nMeta.locales.join(", ")}. Also accepts ?lang=<locale> or x-lang header.\`,
+        example: i18nMeta.defaultLocale,
+        schema: {
+          type: "string",
+          enum: i18nMeta.locales,
+          default: i18nMeta.defaultLocale,
+          example: i18nMeta.defaultLocale,
+        },
+      });
     }
   }
 
@@ -393,6 +423,20 @@ export function extractOpenApiFromHandler(
       responses: {
         [statusCode]: {
           description: "Successful response",
+          ...(i18nMeta && Array.isArray(i18nMeta.locales) && i18nMeta.locales.length > 0
+            ? {
+                headers: {
+                  "Content-Language": {
+                    description: "Negotiated locale for the response",
+                    schema: {
+                      type: "string",
+                      enum: i18nMeta.locales,
+                      example: i18nMeta.defaultLocale,
+                    },
+                  },
+                },
+              }
+            : {}),
           content: {
             "application/json": {
               schema: successResponseSchema,

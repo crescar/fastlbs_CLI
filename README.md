@@ -64,6 +64,7 @@ FastLBS solves these problems natively by unifying **esbuild on-the-fly compilat
   - [4. Dedicated Authorizers & Auxiliary Workers](#4-dedicated-authorizers--auxiliary-workers)
   - [5. Method-Specific Validation Middlewares](#5-method-specific-validation-middlewares)
   - [6. Production Build Strategies (Lambda Layers)](#6-production-build-strategies-lambda-layers)
+  - [7. Native Zero-Dependency i18n for Lambdas](#7-native-zero-dependency-i18n-for-lambdas)
 - [CLI Command Reference](#cli-command-reference)
 - [Project Directory Structure](#project-directory-structure)
 - [Enterprise CI/CD Deployment Guide](#enterprise-cicd-deployment-guide)
@@ -395,12 +396,305 @@ fastlbs build greeting --type modular
 
 ---
 
+### 7. Native Zero-Dependency i18n for Lambdas
+
+FastLBS includes a lightweight, zero-dependency internationalization (i18n) runtime powered by native Node.js `Intl` APIs (`Intl.PluralRules`, `Intl.NumberFormat`, `Intl.DateTimeFormat`, and official IETF BCP 47 locale tags).
+
+- **Opt-in When Creating a Lambda**: Pass `--i18n` (or enable it interactively) when running `fastlbs lambda <name>`.
+- **Retrofit Any Existing Lambda**: Run `fastlbs i18n <name> --locales en,es,pt-BR` to generate `src/i18n/index.ts`, `src/i18n/locales/*.json`, and automatically wire `i18n` into `handlerResponse`.
+- **Project-Level Default Language**: Configure `"defaultLocale": "en"` and `"i18n": { "defaultLocale": "en", "locales": ["en", "es"], "enabledByDefault": false }` in `fastlbs.config.json`, or update it via `fastlbs i18n --default es`.
+- **Automatic Locale Negotiation**: Resolves the active locale per request from `?lang=` -> `X-Lang` / `X-Locale` -> `Accept-Language` (with `q=` quality weights and regional fallback `es-MX` -> `es` -> `en`) -> `event.auth.locale` -> `defaultLocale`.
+- **Type-Safe `event.t()` & Localized Errors**: Autocomplete translation keys, interpolate `{{variables}}`, pluralize with `_one` / `_other`, translate `HandlerErrorResponse.i18n(...)` and Zod validation errors, and emit the `Content-Language` header + OpenAPI `Accept-Language` parameter automatically.
+
+```bash
+# Create a new lambda with i18n enabled
+fastlbs lambda greeting --i18n --locales en,es
+
+# Add i18n (or new locales) to an existing lambda
+fastlbs i18n greeting --locales en,es,pt-BR
+
+# Change the project's default locale in fastlbs.config.json
+fastlbs i18n --default es
+
+# Validate translation keys & {{placeholders}} across all lambdas
+fastlbs i18n --check
+```
+
+#### Translation Catalogs (`src/i18n/locales/*.json`)
+
+```json
+// lambdas/orders/src/i18n/locales/en.json
+{
+  "greeting": "Hello, {{name}}!",
+  "searchResult": "Found results for '{{query}}' on page {{page}}",
+  "orderById": "Order #{{orderId}} retrieved successfully",
+  "orderCreated_one": "Order created for {{customer}} with {{count}} item",
+  "orderCreated_other": "Order created for {{customer}} with {{count}} items",
+  "errors": {
+    "orderNotFound": "Order '{{orderId}}' was not found",
+    "invalidQuantity": "Quantity {{count}} is not valid for {{customer}}"
+  }
+}
+```
+
+```json
+// lambdas/orders/src/i18n/locales/es.json
+{
+  "greeting": "¡Hola, {{name}}!",
+  "searchResult": "Resultados encontrados para '{{query}}' en la página {{page}}",
+  "orderById": "Pedido #{{orderId}} obtenido exitosamente",
+  "orderCreated_one": "Pedido creado para {{customer}} con {{count}} artículo",
+  "orderCreated_other": "Pedido creado para {{customer}} con {{count}} artículos",
+  "errors": {
+    "orderNotFound": "El pedido '{{orderId}}' no fue encontrado",
+    "invalidQuantity": "La cantidad {{count}} no es válida para {{customer}}"
+  }
+}
+```
+
+---
+
+#### Example A: `GET` with `QueryParams` (`?query=shoes&page=1&lang=es`)
+
+```typescript
+// 1. lambdas/searchOrders/src/schemas/index.ts
+import { z } from "zod";
+
+export const SearchQuerySchema = z.object({
+  query: z.string().min(1).describe("Search term").meta({ example: "laptop" }),
+  page: z.string().optional().describe("Page number").meta({ example: "1" }),
+});
+
+// 2. lambdas/searchOrders/src/services/index.ts
+import { HandlerStandardResponse } from "@my-api/common/utils/handlerStandardResponse.util";
+import type { FastlbsContext, DefaultWarmContext, DefaultAuthUser } from "@my-api/common/context/fastlbsContext";
+import type { I18nKey } from "../i18n";
+
+export async function service(
+  event: FastlbsContext<DefaultWarmContext, DefaultAuthUser, I18nKey>
+) {
+  const query = event.getQueryParam("query", "all");
+  const page = event.getQueryParam("page", "1");
+
+  return new HandlerStandardResponse(200, {
+    message: event.t("common.success"), // "Request successful" | "Solicitud exitosa"
+    status: "success",
+    data: {
+      locale: event.locale,
+      summary: event.t("searchResult", { query, page }),
+    },
+  });
+}
+
+// 3. lambdas/searchOrders/src/index.ts
+import { handlerResponse } from "@my-api/common/wrappers/handlerResponse.wrapper";
+import { validatorMiddleware, ValidationOptions } from "@my-api/common/middlewares/validator.middleware";
+import { SearchQuerySchema } from "./schemas";
+import { service } from "./services";
+import { i18n } from "./i18n";
+
+export const handler = handlerResponse(
+  {
+    i18n,
+    event: { method: "GET", path: "v1/orders/search", cors: true },
+    doc: { summary: "Search orders with localized response", tags: ["ORDERS"] },
+  },
+  validatorMiddleware(SearchQuerySchema, ValidationOptions.QUERYPARAMS),
+  service
+);
+```
+
+---
+
+#### Example B: `GET` with URL Parameters (`PathParams`: `/v1/orders/{orderId}`) & Localized Errors
+
+```typescript
+// 1. lambdas/getOrderById/src/schemas/index.ts
+import { z } from "zod";
+
+export const OrderPathParamsSchema = z.object({
+  orderId: z.string().min(1).describe("Order ID in URL path").meta({ example: "ord_900" }),
+});
+
+// 2. lambdas/getOrderById/src/services/index.ts
+import { HandlerStandardResponse } from "@my-api/common/utils/handlerStandardResponse.util";
+import { HandlerErrorResponse } from "@my-api/common/utils/handlerErrorResponse.util";
+import type { FastlbsContext, DefaultWarmContext, DefaultAuthUser } from "@my-api/common/context/fastlbsContext";
+import type { I18nKey } from "../i18n";
+
+export async function service(
+  event: FastlbsContext<DefaultWarmContext, DefaultAuthUser, I18nKey>
+) {
+  const orderId = event.getPathParam("orderId", "");
+
+  // Throw a localized 404 error automatically translated into the request's locale:
+  if (orderId === "not-found") {
+    throw HandlerErrorResponse.i18n(404, "errors.orderNotFound", { orderId });
+  }
+
+  return new HandlerStandardResponse(200, {
+    message: event.t("common.success"),
+    status: "success",
+    data: {
+      orderId,
+      description: event.t("orderById", { orderId }),
+    },
+  });
+}
+
+// 3. lambdas/getOrderById/src/index.ts
+export const handler = handlerResponse(
+  {
+    i18n,
+    event: { method: "GET", path: "v1/orders/{orderId}", cors: true },
+    doc: { summary: "Get order by URL parameter with i18n", tags: ["ORDERS"] },
+  },
+  validatorMiddleware(OrderPathParamsSchema, ValidationOptions.PATHPARAMS),
+  service
+);
+```
+
+---
+
+#### Example C: `POST` with `Body`, URL Parameters (`PathParams`), and Pluralization (`_one` / `_other`)
+
+```typescript
+// 1. lambdas/createOrder/src/schemas/index.ts
+import { z } from "zod";
+
+export const CustomerPathSchema = z.object({
+  customerId: z.string().describe("Customer ID from URL").meta({ example: "cust_42" }),
+});
+
+export const CreateOrderBodySchema = z.object({
+  customer: z.string().min(2).describe("Customer full name").meta({ example: "Luis Crespo" }),
+  itemsCount: z.number().int().positive().describe("Number of items").meta({ example: 3 }),
+});
+
+export type CreateOrderBody = z.infer<typeof CreateOrderBodySchema>;
+
+// 2. lambdas/createOrder/src/services/index.ts
+import { HandlerStandardResponse } from "@my-api/common/utils/handlerStandardResponse.util";
+import { HandlerErrorResponse } from "@my-api/common/utils/handlerErrorResponse.util";
+import type { FastlbsContext, DefaultWarmContext, DefaultAuthUser } from "@my-api/common/context/fastlbsContext";
+import type { CreateOrderBody } from "../schemas";
+import type { I18nKey } from "../i18n";
+
+export async function service(
+  event: FastlbsContext<DefaultWarmContext, DefaultAuthUser, I18nKey>
+) {
+  const customerId = event.getPathParam("customerId", "cust_default");
+  const body = event.getJsonBody<CreateOrderBody>();
+  const customer = body?.customer ?? "Guest";
+  const count = body?.itemsCount ?? 1;
+
+  if (count > 100) {
+    throw HandlerErrorResponse.i18n(400, "errors.invalidQuantity", { count, customer });
+  }
+
+  return new HandlerStandardResponse(201, {
+    message: event.t("common.success"),
+    status: "success",
+    data: {
+      customerId,
+      // Automatically picks "orderCreated_one" (count = 1) or "orderCreated_other" (count > 1):
+      confirmation: event.t("orderCreated", { customer, count }),
+    },
+  });
+}
+
+// 3. lambdas/createOrder/src/index.ts
+export const handler = handlerResponse(
+  {
+    i18n,
+    event: {
+      method: "POST",
+      path: "v1/customers/{customerId}/orders",
+      cors: true,
+    },
+    doc: { summary: "Create order with localized body validation and plurals", tags: ["ORDERS"] },
+  },
+  validatorMiddleware(CustomerPathSchema, ValidationOptions.PATHPARAMS),
+  validatorMiddleware(CreateOrderBodySchema, ValidationOptions.BODY),
+  service
+);
+```
+
+#### Calling i18n-Enabled Endpoints (`Accept-Language`, `X-Lang`, or `?lang=`)
+
+```bash
+# 1. Via standard Accept-Language HTTP header (with regional fallback es-MX -> es)
+curl -X GET "http://localhost:3000/v1/orders/ord_900" \
+  -H "Accept-Language: es-MX,es;q=0.9,en;q=0.8"
+
+# 2. Via query parameter (?lang=es) on GET with QueryParams
+curl -X GET "http://localhost:3000/v1/orders/search?query=teclado&page=2&lang=es"
+
+# 3. Via POST with JSON Body + URL PathParam + X-Lang header
+curl -X POST "http://localhost:3000/v1/customers/cust_42/orders" \
+  -H "Content-Type: application/json" \
+  -H "X-Lang: es" \
+  -d '{"customer": "Luis Crespo", "itemsCount": 3}'
+```
+
+---
+
+#### Automatic & Custom Zod Validation Error Translation
+
+When `i18n` is enabled on a lambda, `validatorMiddleware` translates Zod validation errors in **two ways**:
+
+1. **Zero-Config Automatic Translation**: Standard Zod rules (`z.string()`, `.email()`, `.uuid()`, `.url()`, `.min()`, `.max()`, `z.enum()`) are automatically translated into the request's active language using `common.validation.zod.*` in `libs/common/i18n/locales/{en,es}.json`.
+2. **Custom Per-Field i18n Keys**: Pass any translation key from your lambda's `locales/*.json` directly as the Zod error message (e.g. `.min(3, "validation.nameTooShort")`). `validatorMiddleware` automatically interpolates `{{field}}`, `{{minimum}}`, `{{maximum}}`, `{{expected}}`, `{{received}}`, and `{{options}}`.
+
+```typescript
+// 1. lambdas/createOrder/src/schemas/index.ts
+import { z } from "zod";
+
+export const CreateOrderBodySchema = z.object({
+  // Custom i18n key from lambdas/createOrder/src/i18n/locales/*.json:
+  customer: z.string({ message: "validation.customerRequired" })
+             .min(3, "validation.customerMinLength"),
+
+  // Standard Zod rules (no custom message needed — translated automatically!):
+  email: z.string().email(),
+  itemsCount: z.number().int().min(1),
+  priority: z.enum(["normal", "express"]),
+});
+```
+
+```json
+// 2. lambdas/createOrder/src/i18n/locales/es.json
+{
+  "validation": {
+    "customerRequired": "El nombre del cliente ({{field}}) es obligatorio",
+    "customerMinLength": "El campo '{{field}}' debe tener al menos {{minimum}} letras"
+  }
+}
+```
+
+```json
+// 3. Automatic 400 response when called with Accept-Language: es
+// POST /v1/customers/cust_42/orders  ->  { "customer": "Lu", "email": "bad", "itemsCount": 0, "priority": "vip" }
+{
+  "message": "Solicitud inválida",
+  "error": [
+    "customer: El campo 'customer' debe tener al menos 3 letras",
+    "email: Correo electrónico inválido",
+    "itemsCount: Debe ser mayor o igual a 1",
+    "priority: Valor inválido. Se esperaba uno de: normal, express"
+  ]
+}
+```
+
+---
+
 ## CLI Command Reference
 
 | Command | Description | Example |
 | :--- | :--- | :--- |
 | `fastlbs new <name>` | Scaffolds a new enterprise TypeScript project | `fastlbs new my-api` |
-| `fastlbs lambda <name>` | Interactively generates an HTTP, Authorizer, or Auxiliary Lambda | `fastlbs lambda getUsers` |
+| `fastlbs lambda <name>` | Interactively generates an HTTP, Authorizer, or Auxiliary Lambda (supports `--i18n`) | `fastlbs lambda getUsers --i18n` |
+| `fastlbs i18n [name]` | Adds, updates, or validates (`--check`) native i18n translations for a lambda or project | `fastlbs i18n getUsers --locales en,es` |
 | `fastlbs start [name]` | Runs local development server with Serverless Offline | `fastlbs start` or `fastlbs start getUsers` |
 | `fastlbs build <name>` | Compiles lambda to JavaScript (`--type bundle` or `--type modular`) | `fastlbs build getUsers --type modular` |
 | `fastlbs test [name]` | Runs Jest unit and integration tests | `fastlbs test` or `fastlbs test getUsers` |
@@ -413,26 +707,32 @@ fastlbs build greeting --type modular
 
 ```text
 my-enterprise-api/
+├── libs/common/                      # Reusable enterprise code (@my-api/common)
+│   ├── context/
+│   │   └── fastlbsContext.ts         # FastlbsEvent & FastlbsContext types
+│   ├── i18n/
+│   │   ├── index.ts                  # Zero-dependency defineI18n engine
+│   │   └── locales/{en,es}.json      # Shared common translations
+│   ├── middlewares/
+│   │   ├── logging.middleware.ts
+│   │   └── validator.middleware.ts
+│   ├── utils/
+│   │   └── handlerStandardResponse.util.ts
+│   └── wrappers/
+│       └── handlerResponse.wrapper.ts
 ├── lambdas/
-│   ├── @common/                      # Reusable enterprise code
-│   │   ├── context/
-│   │   │   └── fastlbsContext.ts     # FastlbsEvent & FastlbsContext types
-│   │   ├── middlewares/
-│   │   │   ├── logging.middleware.ts
-│   │   │   └── validator.middleware.ts
-│   │   ├── utils/
-│   │   │   └── handlerStandardResponse.util.ts
-│   │   └── wrappers/
-│   │       └── handlerResponse.wrapper.ts
 │   ├── __doc__/                      # Swagger UI & OpenAPI 3.0 Lambda
 │   │   └── src/index.ts
 │   └── greeting/                     # Example microservice lambda
 │       ├── src/
 │       │   ├── index.ts              # Declarative handler & doc options
+│       │   ├── i18n/                 # Optional per-lambda i18n catalogs
+│       │   │   ├── index.ts
+│       │   │   └── locales/{en,es}.json
 │       │   ├── schemas/              # Zod input & output schemas
 │       │   └── services/             # Business logic & warm context usage
-│       └── tests/
-│           └── greeting.test.ts      # Automated Jest unit tests
+│       └── __tests__/
+│           └── index.spec.ts         # Automated Jest unit tests
 ├── serverlessConfig/
 │   ├── basicServerlessConfig.json    # Base provider & custom settings
 │   └── functions/                    # Auto-synchronized function configs

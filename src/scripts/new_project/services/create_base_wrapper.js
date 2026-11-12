@@ -3,7 +3,8 @@ import path from 'path';
 
 export function createBaseWrapper(projectName) {
     const wrapperContent =
-`try {
+`/* @fastlbs-i18n v1 */
+try {
   if (typeof process.loadEnvFile === 'function') {
     process.loadEnvFile();
   }
@@ -26,6 +27,15 @@ import {
 } from "../context/fastlbsContext";
 
 export type WarmInitializer<TCustom = Record<string, unknown>> = () => Promise<TCustom> | TCustom;
+
+export interface FastlbsI18nAdapter<TKey extends string = string> {
+  readonly defaultLocale: string;
+  readonly locales: string[];
+  resolveLocale(event: any): string;
+  translator(locale?: string): (key: TKey | (string & {}), params?: Record<string, unknown>) => string;
+  t(key: string, params?: Record<string, unknown>, locale?: string): string;
+  has?(key: string, locale?: string): boolean;
+}
 
 export type HttpMethod =
   | "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS"
@@ -96,7 +106,8 @@ export interface HandlerDocConfig {
 
 export interface HandlerOptions<
   TCustom = Record<string, unknown>,
-  TAuth = DefaultAuthUser
+  TAuth = DefaultAuthUser,
+  TI18nKey extends string = string
 > {
   /**
    * Async or sync initializer executed on Cold Start.
@@ -110,6 +121,12 @@ export interface HandlerOptions<
    * during container initialization.
    */
   eagerInit?: boolean;
+
+  /**
+   * Optional i18n instance created with defineI18n({...}) to negotiate request locale,
+   * bind event.t(key, params), translate errors, and emit the Content-Language header.
+   */
+  i18n?: FastlbsI18nAdapter<TI18nKey>;
 
   /**
    * Serverless event definition(s) automatically synchronized to
@@ -137,25 +154,28 @@ export interface HandlerOptions<
 export type HandlerCallback<
   T = unknown,
   TCustom = DefaultWarmContext,
-  TAuth = DefaultAuthUser
+  TAuth = DefaultAuthUser,
+  TI18nKey extends string = string
 > = (
-  event: FastlbsContext<TCustom, TAuth>,
+  event: FastlbsContext<TCustom, TAuth, TI18nKey>,
   context: Context
 ) => Promise<HandlerStandardResponse<T>>;
 
 export type AuthorizerCallback<
   TUser = DefaultAuthUser,
-  TCustom = DefaultWarmContext
+  TCustom = DefaultWarmContext,
+  TI18nKey extends string = string
 > = (
-  event: FastlbsContext<TCustom>,
+  event: FastlbsContext<TCustom, DefaultAuthUser, TI18nKey>,
   context: Context
 ) => Promise<TUser | HandlerStandardResponse<TUser>>;
 
 export type AuxiliaryCallback<
   TOutput = unknown,
-  TCustom = DefaultWarmContext
+  TCustom = DefaultWarmContext,
+  TI18nKey extends string = string
 > = (
-  event: FastlbsContext<TCustom>,
+  event: FastlbsContext<TCustom, DefaultAuthUser, TI18nKey>,
   context: Context
 ) => Promise<TOutput | HandlerStandardResponse<TOutput>>;
 
@@ -164,9 +184,10 @@ export type MiddlewareNext<T = any> = () => Promise<HandlerStandardResponse<T>>;
 export type HandlerMiddleware<
   T = any,
   TCustom = DefaultWarmContext,
-  TAuth = DefaultAuthUser
+  TAuth = DefaultAuthUser,
+  TI18nKey extends string = string
 > = (
-  event: FastlbsContext<TCustom, TAuth>,
+  event: FastlbsContext<TCustom, TAuth, TI18nKey>,
   context: Context,
   next: MiddlewareNext<T>
 ) => Promise<HandlerStandardResponse<T>>;
@@ -188,21 +209,27 @@ export interface AuthorizerPolicyResponse<TUser = DefaultAuthUser> {
 
 export type FastlbsLambdaHandler<
   TCustom = DefaultWarmContext,
-  TAuth = DefaultAuthUser
+  TAuth = DefaultAuthUser,
+  TI18nKey extends string = string
 > = ((
   event: APIGatewayProxyEventV2,
   context: Context
 ) => Promise<APIGatewayProxyResultV2>) & {
   __fastlbsMetadata?: {
     kind: "http";
-    options: HandlerOptions<TCustom, TAuth>;
+    options: HandlerOptions<TCustom, TAuth, TI18nKey>;
     validators: Array<{ schema: ZodType; option: string }>;
+    i18n?: {
+      defaultLocale: string;
+      locales: string[];
+    };
   };
 };
 
 export type FastlbsAuthorizerHandler<
   TUser = DefaultAuthUser,
-  TCustom = DefaultWarmContext
+  TCustom = DefaultWarmContext,
+  TI18nKey extends string = string
 > = ((
   event: APIGatewayProxyEventV2,
   context: Context
@@ -211,14 +238,19 @@ export type FastlbsAuthorizerHandler<
   resolveUser: (event: APIGatewayProxyEventV2, context: Context) => Promise<TUser>;
   __fastlbsMetadata?: {
     kind: "authorizer";
-    options: HandlerOptions<TCustom>;
+    options: HandlerOptions<TCustom, DefaultAuthUser, TI18nKey>;
     validators: Array<{ schema: ZodType; option: string }>;
+    i18n?: {
+      defaultLocale: string;
+      locales: string[];
+    };
   };
 };
 
 export type FastlbsAuxiliaryHandler<
   TOutput = unknown,
-  TCustom = DefaultWarmContext
+  TCustom = DefaultWarmContext,
+  TI18nKey extends string = string
 > = ((
   event: any,
   context: Context
@@ -226,8 +258,12 @@ export type FastlbsAuxiliaryHandler<
   __fastlbsAuxiliary: true;
   __fastlbsMetadata?: {
     kind: "auxiliary";
-    options: HandlerOptions<TCustom>;
+    options: HandlerOptions<TCustom, DefaultAuthUser, TI18nKey>;
     validators: Array<{ schema: ZodType; option: string }>;
+    i18n?: {
+      defaultLocale: string;
+      locales: string[];
+    };
   };
 };
 
@@ -240,7 +276,41 @@ function isOptionsArg(firstArg: unknown): boolean {
   );
 }
 
-function createWarmContextResolver<TCustom>(options: HandlerOptions<TCustom, any>) {
+function applyEventI18n(
+  event: FastlbsEvent<any, any, any>,
+  i18n?: FastlbsI18nAdapter<any>
+): string | undefined {
+  if (!i18n || typeof i18n.resolveLocale !== "function") {
+    return undefined;
+  }
+  const activeLocale = i18n.resolveLocale(event);
+  const translateFn = i18n.translator(activeLocale);
+  event.bindI18n(activeLocale, (key, params) => translateFn(key, params));
+  return activeLocale;
+}
+
+function translateErrorMessage(
+  error: HandlerErrorResponse,
+  i18n?: FastlbsI18nAdapter<any>,
+  locale?: string
+): string {
+  if (!i18n || typeof i18n.t !== "function") {
+    return error.message;
+  }
+  const activeLocale = locale || i18n.defaultLocale || "en";
+  if (error.messageKey) {
+    if (typeof i18n.has !== "function" || i18n.has(error.messageKey, activeLocale)) {
+      return i18n.t(error.messageKey, error.messageParams, activeLocale);
+    }
+    return error.message;
+  }
+  if (typeof i18n.has === "function" && i18n.has(error.message, activeLocale)) {
+    return i18n.t(error.message, error.messageParams, activeLocale);
+  }
+  return error.message;
+}
+
+function createWarmContextResolver<TCustom>(options: HandlerOptions<TCustom, any, any>) {
   let cachedWarmContext: TCustom | null = null;
   let initPromise: Promise<TCustom> | null = null;
 
@@ -291,33 +361,36 @@ function unwrapStandardResponse<TData>(result: any): TData {
 
 export function handlerAuthorizer<
   TUser = DefaultAuthUser,
-  TCustom = DefaultWarmContext
+  TCustom = DefaultWarmContext,
+  TI18nKey extends string = string
 >(
-  options: HandlerOptions<TCustom>,
+  options: HandlerOptions<TCustom, DefaultAuthUser, TI18nKey>,
   ...args: [
-    ...middlewares: HandlerMiddleware<any, TCustom>[],
-    callback: AuthorizerCallback<TUser, TCustom>
+    ...middlewares: HandlerMiddleware<any, TCustom, DefaultAuthUser, TI18nKey>[],
+    callback: AuthorizerCallback<TUser, TCustom, TI18nKey>
   ]
-): FastlbsAuthorizerHandler<TUser, TCustom>;
+): FastlbsAuthorizerHandler<TUser, TCustom, TI18nKey>;
 
 export function handlerAuthorizer<
   TUser = DefaultAuthUser,
-  TCustom = DefaultWarmContext
+  TCustom = DefaultWarmContext,
+  TI18nKey extends string = string
 >(
   ...args: [
-    ...middlewares: HandlerMiddleware<any, TCustom>[],
-    callback: AuthorizerCallback<TUser, TCustom>
+    ...middlewares: HandlerMiddleware<any, TCustom, DefaultAuthUser, TI18nKey>[],
+    callback: AuthorizerCallback<TUser, TCustom, TI18nKey>
   ]
-): FastlbsAuthorizerHandler<TUser, TCustom>;
+): FastlbsAuthorizerHandler<TUser, TCustom, TI18nKey>;
 
 export function handlerAuthorizer<
   TUser = DefaultAuthUser,
-  TCustom = DefaultWarmContext
->(...args: any[]): FastlbsAuthorizerHandler<TUser, TCustom> {
+  TCustom = DefaultWarmContext,
+  TI18nKey extends string = string
+>(...args: any[]): FastlbsAuthorizerHandler<TUser, TCustom, TI18nKey> {
   const hasOpts = isOptionsArg(args[0]);
-  const options: HandlerOptions<TCustom> = hasOpts ? args[0] : {};
-  const callback: AuthorizerCallback<TUser, TCustom> = args[args.length - 1];
-  const middlewares: HandlerMiddleware<any, TCustom>[] = hasOpts
+  const options: HandlerOptions<TCustom, DefaultAuthUser, TI18nKey> = hasOpts ? args[0] : {};
+  const callback: AuthorizerCallback<TUser, TCustom, TI18nKey> = args[args.length - 1];
+  const middlewares: HandlerMiddleware<any, TCustom, DefaultAuthUser, TI18nKey>[] = hasOpts
     ? args.slice(1, -1)
     : args.slice(0, -1);
 
@@ -332,7 +405,11 @@ export function handlerAuthorizer<
     context: Context
   ): Promise<TUser> => {
     const warmContext = await resolveWarmContext();
-    const event = new FastlbsEvent<TCustom>(rawEvent, warmContext) as FastlbsContext<TCustom>;
+    const event = new FastlbsEvent<TCustom, DefaultAuthUser, TI18nKey>(
+      rawEvent,
+      warmContext
+    ) as FastlbsContext<TCustom, DefaultAuthUser, TI18nKey>;
+    applyEventI18n(event, options.i18n);
 
     let currentIndex = -1;
     const dispatch = async (index: number): Promise<any> => {
@@ -359,7 +436,7 @@ export function handlerAuthorizer<
     return unwrapStandardResponse<TUser>(result);
   };
 
-  const wrappedAuthorizer: FastlbsAuthorizerHandler<TUser, TCustom> = Object.assign(
+  const wrappedAuthorizer: FastlbsAuthorizerHandler<TUser, TCustom, TI18nKey> = Object.assign(
     async (
       rawEvent: APIGatewayProxyEventV2,
       context: Context
@@ -409,6 +486,8 @@ export function handlerAuthorizer<
         };
       } catch (error) {
         if (error instanceof HandlerErrorResponse && error.statusCode === 403) {
+          const activeLocale = options.i18n?.resolveLocale?.(rawEvent);
+          const translatedMsg = translateErrorMessage(error, options.i18n, activeLocale);
           return {
             principalId: "unauthorized",
             isAuthorized: false,
@@ -426,7 +505,7 @@ export function handlerAuthorizer<
               ],
             },
             context: {
-              errorMessage: error.message || "Forbidden",
+              errorMessage: translatedMsg || "Forbidden",
             },
           };
         }
@@ -441,6 +520,14 @@ export function handlerAuthorizer<
         kind: "authorizer" as const,
         options,
         validators,
+        ...(options.i18n
+          ? {
+              i18n: {
+                defaultLocale: options.i18n.defaultLocale,
+                locales: options.i18n.locales,
+              },
+            }
+          : {}),
       },
     }
   );
@@ -450,33 +537,36 @@ export function handlerAuthorizer<
 
 export function handlerAuxiliary<
   TOutput = unknown,
-  TCustom = DefaultWarmContext
+  TCustom = DefaultWarmContext,
+  TI18nKey extends string = string
 >(
-  options: HandlerOptions<TCustom>,
+  options: HandlerOptions<TCustom, DefaultAuthUser, TI18nKey>,
   ...args: [
-    ...middlewares: HandlerMiddleware<any, TCustom>[],
-    callback: AuxiliaryCallback<TOutput, TCustom>
+    ...middlewares: HandlerMiddleware<any, TCustom, DefaultAuthUser, TI18nKey>[],
+    callback: AuxiliaryCallback<TOutput, TCustom, TI18nKey>
   ]
-): FastlbsAuxiliaryHandler<TOutput, TCustom>;
+): FastlbsAuxiliaryHandler<TOutput, TCustom, TI18nKey>;
 
 export function handlerAuxiliary<
   TOutput = unknown,
-  TCustom = DefaultWarmContext
+  TCustom = DefaultWarmContext,
+  TI18nKey extends string = string
 >(
   ...args: [
-    ...middlewares: HandlerMiddleware<any, TCustom>[],
-    callback: AuxiliaryCallback<TOutput, TCustom>
+    ...middlewares: HandlerMiddleware<any, TCustom, DefaultAuthUser, TI18nKey>[],
+    callback: AuxiliaryCallback<TOutput, TCustom, TI18nKey>
   ]
-): FastlbsAuxiliaryHandler<TOutput, TCustom>;
+): FastlbsAuxiliaryHandler<TOutput, TCustom, TI18nKey>;
 
 export function handlerAuxiliary<
   TOutput = unknown,
-  TCustom = DefaultWarmContext
->(...args: any[]): FastlbsAuxiliaryHandler<TOutput, TCustom> {
+  TCustom = DefaultWarmContext,
+  TI18nKey extends string = string
+>(...args: any[]): FastlbsAuxiliaryHandler<TOutput, TCustom, TI18nKey> {
   const hasOpts = isOptionsArg(args[0]);
-  const options: HandlerOptions<TCustom> = hasOpts ? args[0] : {};
-  const callback: AuxiliaryCallback<TOutput, TCustom> = args[args.length - 1];
-  const middlewares: HandlerMiddleware<any, TCustom>[] = hasOpts
+  const options: HandlerOptions<TCustom, DefaultAuthUser, TI18nKey> = hasOpts ? args[0] : {};
+  const callback: AuxiliaryCallback<TOutput, TCustom, TI18nKey> = args[args.length - 1];
+  const middlewares: HandlerMiddleware<any, TCustom, DefaultAuthUser, TI18nKey>[] = hasOpts
     ? args.slice(1, -1)
     : args.slice(0, -1);
 
@@ -486,10 +576,14 @@ export function handlerAuxiliary<
 
   const resolveWarmContext = createWarmContextResolver<TCustom>(options);
 
-  const wrappedAuxiliary: FastlbsAuxiliaryHandler<TOutput, TCustom> = Object.assign(
+  const wrappedAuxiliary: FastlbsAuxiliaryHandler<TOutput, TCustom, TI18nKey> = Object.assign(
     async (rawEvent: any, context: Context): Promise<TOutput> => {
       const warmContext = await resolveWarmContext();
-      const event = new FastlbsEvent<TCustom>(rawEvent, warmContext) as FastlbsContext<TCustom>;
+      const event = new FastlbsEvent<TCustom, DefaultAuthUser, TI18nKey>(
+        rawEvent,
+        warmContext
+      ) as FastlbsContext<TCustom, DefaultAuthUser, TI18nKey>;
+      applyEventI18n(event, options.i18n);
 
       let currentIndex = -1;
       const dispatch = async (index: number): Promise<any> => {
@@ -521,6 +615,14 @@ export function handlerAuxiliary<
         kind: "auxiliary" as const,
         options,
         validators,
+        ...(options.i18n
+          ? {
+              i18n: {
+                defaultLocale: options.i18n.defaultLocale,
+                locales: options.i18n.locales,
+              },
+            }
+          : {}),
       },
     }
   );
@@ -531,37 +633,40 @@ export function handlerAuxiliary<
 export function handlerResponse<
   T = unknown,
   TCustom = DefaultWarmContext,
-  TAuth = DefaultAuthUser
+  TAuth = DefaultAuthUser,
+  TI18nKey extends string = string
 >(
-  options: HandlerOptions<TCustom, TAuth>,
+  options: HandlerOptions<TCustom, TAuth, TI18nKey>,
   ...args: [
-    ...middlewares: HandlerMiddleware<T, TCustom, TAuth>[],
-    callback: HandlerCallback<T, TCustom, TAuth>
+    ...middlewares: HandlerMiddleware<T, TCustom, TAuth, TI18nKey>[],
+    callback: HandlerCallback<T, TCustom, TAuth, TI18nKey>
   ]
-): FastlbsLambdaHandler<TCustom, TAuth>;
+): FastlbsLambdaHandler<TCustom, TAuth, TI18nKey>;
 
 export function handlerResponse<
   T = unknown,
   TCustom = DefaultWarmContext,
-  TAuth = DefaultAuthUser
+  TAuth = DefaultAuthUser,
+  TI18nKey extends string = string
 >(
   ...args: [
-    ...middlewares: HandlerMiddleware<T, TCustom, TAuth>[],
-    callback: HandlerCallback<T, TCustom, TAuth>
+    ...middlewares: HandlerMiddleware<T, TCustom, TAuth, TI18nKey>[],
+    callback: HandlerCallback<T, TCustom, TAuth, TI18nKey>
   ]
-): FastlbsLambdaHandler<TCustom, TAuth>;
+): FastlbsLambdaHandler<TCustom, TAuth, TI18nKey>;
 
 export function handlerResponse<
   T = unknown,
   TCustom = DefaultWarmContext,
-  TAuth = DefaultAuthUser
+  TAuth = DefaultAuthUser,
+  TI18nKey extends string = string
 >(
   ...args: any[]
-): FastlbsLambdaHandler<TCustom, TAuth> {
+): FastlbsLambdaHandler<TCustom, TAuth, TI18nKey> {
   const hasOpts = isOptionsArg(args[0]);
-  const options: HandlerOptions<TCustom, TAuth> = hasOpts ? args[0] : {};
-  const callback: HandlerCallback<T, TCustom, TAuth> = args[args.length - 1];
-  const middlewares: HandlerMiddleware<T, TCustom, TAuth>[] = hasOpts
+  const options: HandlerOptions<TCustom, TAuth, TI18nKey> = hasOpts ? args[0] : {};
+  const callback: HandlerCallback<T, TCustom, TAuth, TI18nKey> = args[args.length - 1];
+  const middlewares: HandlerMiddleware<T, TCustom, TAuth, TI18nKey>[] = hasOpts
     ? args.slice(1, -1)
     : args.slice(0, -1);
 
@@ -571,10 +676,11 @@ export function handlerResponse<
 
   const resolveWarmContext = createWarmContextResolver<TCustom>(options);
 
-  const wrappedHandler: FastlbsLambdaHandler<TCustom, TAuth> = async (
+  const wrappedHandler: FastlbsLambdaHandler<TCustom, TAuth, TI18nKey> = async (
     rawEvent: APIGatewayProxyEventV2,
     context: Context
   ): Promise<APIGatewayProxyResultV2> => {
+    let activeLocale: string | undefined = undefined;
     try {
       const baseWarmContext = await resolveWarmContext();
       let mergedWarmContext: Record<string, unknown> = {
@@ -597,7 +703,9 @@ export function handlerResponse<
         } else {
           const authPolicy = await (candidateAuthorizer as any)(rawEvent, context);
           if (authPolicy?.isAuthorized === false) {
-            throw new HandlerErrorResponse(403, "Forbidden");
+            throw new HandlerErrorResponse(403, "Forbidden", undefined, {
+              messageKey: "common.errors.forbidden",
+            });
           }
           explicitAuth = (authPolicy?.user ?? authPolicy?.context ?? authPolicy) as TAuth;
         }
@@ -620,11 +728,12 @@ export function handlerResponse<
         }
       }
 
-      const event = new FastlbsEvent<TCustom, TAuth>(
+      const event = new FastlbsEvent<TCustom, TAuth, TI18nKey>(
         rawEvent,
         mergedWarmContext as TCustom,
         explicitAuth
-      ) as FastlbsContext<TCustom, TAuth>;
+      ) as FastlbsContext<TCustom, TAuth, TI18nKey>;
+      activeLocale = applyEventI18n(event, options.i18n);
 
       let currentIndex = -1;
 
@@ -644,24 +753,49 @@ export function handlerResponse<
       };
 
       const result = await dispatch(0);
+      const responseHeaders: Record<string, string> = {
+        ...(activeLocale ? { "Content-Language": activeLocale } : {}),
+        ...(result.headers || {}),
+      };
       return {
         statusCode: result.statusCode,
+        ...(Object.keys(responseHeaders).length > 0 ? { headers: responseHeaders } : {}),
         body: JSON.stringify(result.responseBody),
       };
     } catch (error) {
+      if (options.i18n && !activeLocale && typeof options.i18n.resolveLocale === "function") {
+        try {
+          activeLocale = options.i18n.resolveLocale(rawEvent);
+        } catch {
+          activeLocale = options.i18n.defaultLocale;
+        }
+      }
+      const errorHeaders = activeLocale ? { headers: { "Content-Language": activeLocale } } : {};
+
       if (error instanceof HandlerErrorResponse) {
+        const translatedMessage = translateErrorMessage(error, options.i18n, activeLocale);
         return {
           statusCode: error.statusCode,
+          ...errorHeaders,
           body: JSON.stringify({
-            message: error.message,
+            message: translatedMessage,
             error: error.error,
           }),
         };
       }
+
+      const unexpectedMessage =
+        options.i18n &&
+        typeof options.i18n.has === "function" &&
+        options.i18n.has("common.errors.unexpected", activeLocale)
+          ? options.i18n.t("common.errors.unexpected", undefined, activeLocale)
+          : "An unexpected error occurred";
+
       return {
         statusCode: 500,
+        ...errorHeaders,
         body: JSON.stringify({
-          message: "An unexpected error occurred",
+          message: unexpectedMessage,
           error: error instanceof Error ? error.message : String(error),
         }),
       };
@@ -672,6 +806,14 @@ export function handlerResponse<
     kind: "http",
     options,
     validators,
+    ...(options.i18n
+      ? {
+          i18n: {
+            defaultLocale: options.i18n.defaultLocale,
+            locales: options.i18n.locales,
+          },
+        }
+      : {}),
   };
 
   return wrappedHandler;

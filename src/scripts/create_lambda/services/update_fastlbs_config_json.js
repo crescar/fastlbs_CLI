@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getProjectRootOrThrow } from '../../../utils/project_context.js';
 
-export function updateFastLbsConfigJson(lambdaName, kind = 'http') {
+export function updateFastLbsConfigJson(lambdaName, kind = 'http', extraMeta = {}) {
     const projectRoot = getProjectRootOrThrow();
     const filePath = path.join(projectRoot, 'fastlbs.config.json');
     if (fs.existsSync(filePath)) {
@@ -12,6 +12,7 @@ export function updateFastLbsConfigJson(lambdaName, kind = 'http') {
         config.lambdas[lambdaName] = {
             directory: `lambdas/${lambdaName}`,
             kind,
+            ...(extraMeta && typeof extraMeta === 'object' ? extraMeta : {}),
         };
         fs.writeFileSync(filePath, JSON.stringify(config, null, 2));
     }

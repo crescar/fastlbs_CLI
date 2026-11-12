@@ -1,6 +1,6 @@
 {
   "name": "fastlbs",
-  "version": "2.0.1",
+  "version": "3.1.0",
   "description": "Enterprise-grade TypeScript CLI and framework for AWS Lambda. Optimizes cold starts with warm typed context, auto-generates OpenAPI 3.0 / Swagger docs from Zod, scaffolds IAM authorizers, syncs Serverless config, and builds with esbuild.",
   "main": "index.js",
   "type": "module",
@@ -46,7 +46,10 @@
     "nodejs",
     "cli",
     "scaffold",
-    "boilerplate"
+    "boilerplate",
+    "i18n",
+    "internationalization",
+    "localization"
   ],
   "repository": {
     "type": "git",

@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.0.1] - 2026-10-16
 
 ### Added
+- **Native Zero-Dependency i18n Engine for Lambdas (`defineI18n`, `fastlbs i18n`)**:
+  - Built-in lightweight internationalization runtime (`libs/common/i18n/index.ts`) powered by native Node.js `Intl.PluralRules`, `Intl.NumberFormat`, `Intl.DateTimeFormat`, and `Intl.getCanonicalLocales` (IETF BCP 47 nomenclature).
+  - Automatic per-request locale negotiation (`?lang=` query -> `X-Lang` / `X-Locale` header -> `Accept-Language` with quality weights `q=` -> `event.auth.locale` -> `defaultLocale`) with regional fallback (`es-MX` -> `es` -> `en`).
+  - Strictly-typed translation helper `event.t(key, params)` with dot-notation autocomplete (`Paths<T>`), `{{var}}` interpolation, and pluralization (`_zero`, `_one`, `_other`), plus `Content-Language` response header injection.
+  - Localized error responses via `HandlerErrorResponse.i18n(statusCode, messageKey, params, error)` and per-request Zod 4 validation error localization.
+  - Automated OpenAPI 3.0 documentation for `Accept-Language` request header and `Content-Language` response header on i18n-enabled endpoints.
+  - New `fastlbs i18n [lambda-name]` CLI command (`--locales`, `--default`, `--all`, `--check`) and `fastlbs lambda <name> --i18n` options, plus `defaultLocale` configuration in `fastlbs.config.json`.
 - **Cold-Start Warmup Hook (`init`)**: Handlers can now define an asynchronous `init` callback in `handlerResponse({ init }, service)` that executes once during the container's cold start. Resolved database connection pools (Prisma, TypeORM), AWS Secrets Manager credentials, and configuration objects are cached in memory and injected into `event.custom`.
 - **`FastlbsEvent` & `FastlbsContext<TCustom, TAuth>`**: Strongly-typed container context extending and wrapping AWS `APIGatewayProxyEventV2`. Includes helper methods:
   - `event.getQueryParam(name, defaultValue)`

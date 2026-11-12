@@ -25,8 +25,9 @@ In `feature/HU-refactor-code` (FastLBS v2.0), over **5,200 lines of code across 
 | **OpenAPI & Swagger UI Docs** | Manual JSON files; only `AuthToken`; easily drifted out of sync. | **Zero-Manual Docs**: Automatic OpenAPI 3.0 generation from Zod schemas via `z.toJSONSchema()` with built-in `BearerAuth` & `BasicAuth`. |
 | **Serverless Sync** | Manual configuration files in `serverlessConfig/`. | **Bi-directional Auto-Sync**: Routes, methods, CORS, and authorizers are extracted from `@fastlbs` JSDoc and `handlerResponse()` automatically. |
 | **Lambda Types** | Only HTTP endpoints. | **Authorizers (`handlerAuthorizer`)** with AWS IAM policies & **Auxiliary Workers (`handlerAuxiliary`)** for SQS/S3/tasks with `before: [...]` chaining. |
+| **Native i18n Engine** | None (manual string handling per lambda). | **Zero-Dependency Native i18n** (`defineI18n`, `event.t()`, `fastlbs i18n`) with IETF BCP 47 locales, `Accept-Language` negotiation, plurals, localized Zod errors, and OpenAPI `Accept-Language` docs. |
 | **Production Packaging** | Single monolithic build mode. | **Dual Build Strategies**: `--type bundle` (inlined single-file) or `--type modular` (isolated `package.json` for AWS Lambda Layers). |
-| **Reliability & Testing** | Minimal error hints; 0 automated CLI tests. | **Unified `FastlbsError`**, path traversal guards, and **23 comprehensive automated smoke/integration tests**. |
+| **Reliability & Testing** | Minimal error hints; 0 automated CLI tests. | **Unified `FastlbsError`**, path traversal guards, and **28 comprehensive automated smoke/integration tests**. |
 
 ---
 
@@ -154,12 +155,111 @@ FastLBS v2 provides two esbuild-powered compilation modes via `fastlbs build <la
 
 ---
 
-### 6. Interactive CLI & Enterprise Safety
+### 6. Native Zero-Dependency Internationalization (i18n) for Lambdas
 
-- **Interactive Wizards**: Running `fastlbs lambda <name>` launches an interactive selector asking whether you want an HTTP Endpoint, an Authorizer, or an Auxiliary Lambda, and prompts for route, method, and authorizer association.
+#### The Problem in v1:
+Returning multi-language messages or localized validation errors required installing heavy third-party libraries (like `i18next`), manually parsing `Accept-Language` headers in every lambda, and maintaining untyped translation keys.
+
+#### The Solution in v2:
+FastLBS includes a zero-dependency i18n engine (`libs/common/i18n/index.ts`) built on native Node.js `Intl` APIs (`Intl.PluralRules`, `Intl.NumberFormat`, `Intl.DateTimeFormat`, and `Intl.getCanonicalLocales`):
+
+- **Project-Level Default Language**: Configure `"defaultLocale": "en"` and `"i18n": { "defaultLocale": "en", "locales": ["en", "es"], "enabledByDefault": false }` in `fastlbs.config.json` (or update it with `fastlbs i18n --default es`).
+- **Opt-In Scaffolding & Retrofitting**:
+  - When creating a new lambda: `fastlbs lambda <name> --i18n --locales en,es`
+  - On any existing lambda: `fastlbs i18n <name> --locales en,es,pt-BR` (idempotently creates `src/i18n/index.ts` and `src/i18n/locales/*.json` and wires `i18n` into `handlerResponse`).
+  - Consistency checker: `fastlbs i18n --check` validates that all locale JSON files have identical keys and `{{placeholder}}` variables.
+- **Automatic Locale Negotiation**: Resolves the request locale in priority order:
+  1. Query parameter (`?lang=es` or `?locale=es`)
+  2. Custom header (`X-Lang: es` or `X-Locale: es`)
+  3. Standard HTTP `Accept-Language: es-MX,es;q=0.9,en;q=0.8` (with regional fallback `es-MX` → `es` → `defaultLocale`)
+  4. Authenticated user claim (`event.auth.locale`)
+  5. Project/Lambda `defaultLocale`
+- **End-to-End Integration**:
+  - `event.t(key, params)` with strict TypeScript key autocomplete (`Paths<T>`), `{{var}}` interpolation, and pluralization (`_zero`, `_one`, `_other`).
+  - `HandlerErrorResponse.i18n(statusCode, messageKey, params, error)` and localized Zod validation errors per request (both automatic translation of standard Zod rules via `common.validation.zod.*` and custom per-field i18n keys with `{{field}}`, `{{minimum}}`, `{{maximum}}`, and `{{options}}` interpolation).
+  - Automatic `Content-Language` response header and `Accept-Language` OpenAPI 3.0 parameter generation.
+
+#### Examples Across HTTP Methods (`GET` QueryParams, `GET` URL/PathParams, and `POST` Body)
+
+```typescript
+// 1. Translation catalog: lambdas/orders/src/i18n/locales/es.json
+{
+  "searchSummary": "Mostrando resultados para '{{term}}' (página {{page}})",
+  "orderDetails": "Pedido #{{orderId}} encontrado",
+  "itemsCreated_one": "Se creó {{count}} artículo para {{customer}}",
+  "itemsCreated_other": "Se crearon {{count}} artículos para {{customer}}",
+  "errors": {
+    "orderNotFound": "El pedido '{{orderId}}' no existe"
+  }
+}
+```
+
+```typescript
+// 2. GET with QueryParams (?term=laptop&page=2&lang=es)
+export async function searchOrdersService(
+  event: FastlbsContext<DefaultWarmContext, DefaultAuthUser, I18nKey>
+) {
+  const term = event.getQueryParam("term", "all");
+  const page = event.getQueryParam("page", "1");
+
+  return new HandlerStandardResponse(200, {
+    message: event.t("common.success"),
+    status: "success",
+    data: {
+      locale: event.locale,
+      summary: event.t("searchSummary", { term, page }),
+    },
+  });
+}
+
+// 3. GET with URL PathParams (/v1/orders/{orderId}) + Localized 404 Error
+export async function getOrderByIdService(
+  event: FastlbsContext<DefaultWarmContext, DefaultAuthUser, I18nKey>
+) {
+  const orderId = event.getPathParam("orderId", "");
+  if (orderId === "000") {
+    throw HandlerErrorResponse.i18n(404, "errors.orderNotFound", { orderId });
+  }
+
+  return new HandlerStandardResponse(200, {
+    message: event.t("common.success"),
+    status: "success",
+    data: {
+      detail: event.t("orderDetails", { orderId }),
+    },
+  });
+}
+
+// 4. POST with Body + URL PathParams (/v1/customers/{customerId}/orders) + Plurals
+export async function createOrderService(
+  event: FastlbsContext<DefaultWarmContext, DefaultAuthUser, I18nKey>
+) {
+  const customerId = event.getPathParam("customerId", "cust_1");
+  const body = event.getJsonBody<{ customer: string; itemsCount: number }>();
+
+  return new HandlerStandardResponse(201, {
+    message: event.t("common.success"),
+    status: "success",
+    data: {
+      customerId,
+      // Automatically selects itemsCreated_one or itemsCreated_other based on count:
+      confirmation: event.t("itemsCreated", {
+        customer: body?.customer ?? "Client",
+        count: body?.itemsCount ?? 1,
+      }),
+    },
+  });
+}
+```
+
+---
+
+### 7. Interactive CLI & Enterprise Safety
+
+- **Interactive Wizards**: Running `fastlbs lambda <name>` launches an interactive selector asking whether you want an HTTP Endpoint, an Authorizer, or an Auxiliary Lambda, and prompts for route, method, authorizer association, and optional i18n locales.
 - **`FastlbsError`**: Standardized error classes with actionable developer hints and appropriate shell exit codes.
 - **Path Traversal Guards**: Strict project root validation prevents accidental writes outside the project workspace.
-- **Automated Smoke Test Suite**: 23 automated tests in `tests/cli.smoke.test.js` covering every command, parser, context wrapper, and generator.
+- **Automated Smoke Test Suite**: 28 automated tests in `tests/cli.smoke.test.js` covering every command, parser, context wrapper, i18n engine, and generator.
 
 ---
 

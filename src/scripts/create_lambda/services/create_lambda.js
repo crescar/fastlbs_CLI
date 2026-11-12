@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { assertPathInsideProject, assertValidLambdaName } from '../../../utils/cli_validation.js';
 import { getProjectRootOrThrow } from '../../../utils/project_context.js';
+import { scaffoldLambdaI18n } from '../../../services/i18n/i18n_scaffolder.js';
 
 const createFolderStructure = (lambdaName, rootDir = null) => {
     assertValidLambdaName(lambdaName);
@@ -254,12 +255,39 @@ export const InternalServerErrorSchema = z.object({
         : '';
     const authDataProp = authorizerName ? `\n            authenticatedUser,` : '';
 
+    const i18nEnabled = Boolean(options.i18n);
+    let i18nResult = null;
+    if (i18nEnabled) {
+        const i18nOpts = typeof options.i18n === 'object' ? options.i18n : {};
+        i18nResult = scaffoldLambdaI18n(projectRoot, lambdaName, {
+            ...i18nOpts,
+            kind: 'http',
+        });
+    }
+
+    const i18nServiceTypeImport = i18nEnabled ? `\nimport type { I18nKey } from "../i18n";` : '';
+    const contextTypeImport = i18nEnabled
+        ? `import type { FastlbsContext, DefaultWarmContext, DefaultAuthUser } from "@${projectName}/common/context/fastlbsContext";`
+        : `import type { FastlbsContext, DefaultWarmContext } from "@${projectName}/common/context/fastlbsContext";`;
+    const eventParamType = i18nEnabled
+        ? `FastlbsContext<DefaultWarmContext, DefaultAuthUser, I18nKey>`
+        : `FastlbsContext`;
+    const errorExampleComment = i18nEnabled
+        ? `    // Example: throw a localized HTTP error (documented in doc.errors)\n    // if (name === "invalid") {\n    //     throw HandlerErrorResponse.i18n(400, "errors.invalidName", { name }, ["name cannot be 'invalid'"]);\n    // }`
+        : `    // Example: throw a controlled HTTP error (documented in doc.errors)\n    // if (name === "invalid") {\n    //     throw new HandlerErrorResponse(400, "Invalid request parameters", ["name cannot be 'invalid'"]);\n    // }`;
+    const responseMessageLine = i18nEnabled
+        ? `        message: event.t("common.success"),`
+        : `        message: "Request successful",`;
+    const responseGreetingLine = i18nEnabled
+        ? `            greeting: event.t("greeting", { name }),${authDataProp}`
+        : `            greeting: \`Hello, \${name}! from Lambda ${lambdaName}\`,${authDataProp}`;
+
     const servicesContent =
 `import { HandlerStandardResponse } from "@${projectName}/common/utils/handlerStandardResponse.util";
 import { HandlerErrorResponse } from "@${projectName}/common/utils/handlerErrorResponse.util";
-import type { FastlbsContext, DefaultWarmContext } from "@${projectName}/common/context/fastlbsContext";
+${contextTypeImport}
 import type { Context } from "aws-lambda";
-import type { ${schemaTypesList} } from "../schemas";
+import type { ${schemaTypesList} } from "../schemas";${i18nServiceTypeImport}
 
 // Optional: define your strongly-typed warm context (secrets, db, env, etc.)
 // export interface MyWarmContext extends DefaultWarmContext {
@@ -275,20 +303,17 @@ import type { ${schemaTypesList} } from "../schemas";
 // };
 
 export async function service(
-    event: FastlbsContext,
+    event: ${eventParamType},
     _context: Context
 ): Promise<HandlerStandardResponse<GreetingData>> {
 ${serviceExtraction}${authExtractionLine}
-    // Example: throw a controlled HTTP error (documented in doc.errors)
-    // if (name === "invalid") {
-    //     throw new HandlerErrorResponse(400, "Invalid request parameters", ["name cannot be 'invalid'"]);
-    // }
+${errorExampleComment}
 
     return new HandlerStandardResponse<GreetingData>(200, {
-        message: "Request successful",
+${responseMessageLine}
         status: "success",
         data: {
-            greeting: \`Hello, \${name}! from Lambda ${lambdaName}\`,${authDataProp}
+${responseGreetingLine}
         },
     });
 }
@@ -331,7 +356,12 @@ ${serviceExtraction}${authExtractionLine}
         }
     }
 
+    if (i18nEnabled) {
+        preImports.push(`import { i18n } from "./i18n";`);
+    }
+
     const preImportsBlock = preImports.length > 0 ? `\n${preImports.join('\n')}` : '';
+    const i18nOptionLine = i18nEnabled ? `\n        i18n,` : '';
     const authorizerEventLine = authorizerName ? `\n            authorizer: "${authorizerName}",` : '';
     const beforeConfigBlock =
         beforeHandlers.length > 0 ? `\n        before: [${beforeHandlers.join(', ')}],` : '';
@@ -350,7 +380,7 @@ import {
 import { service } from "./services";${preImportsBlock}
 
 export const handler = handlerResponse(
-    {
+    {${i18nOptionLine}
         event: {
             method: "${upperMethod}",
             path: "${cleanPath}",
@@ -379,6 +409,36 @@ ${middlewareLines}
 `;
     fs.writeFileSync(path.join(srcDir, 'index.ts'), indexContent, 'utf-8');
 
+    const hasEsLocale = Boolean(
+        i18nEnabled &&
+            i18nResult &&
+            Array.isArray(i18nResult.locales) &&
+            i18nResult.locales.some((loc) => loc === 'es' || loc.startsWith('es-'))
+    );
+
+    const spanishTestBlock = hasEsLocale
+        ? `
+
+    it("should return a localized greeting when Accept-Language is es", async () => {
+        const mockEvent = {
+            headers: {
+                "accept-language": "es-MX,es;q=0.9",
+            },
+        } as any;
+        const mockContext = {} as any;
+        const response = await handler(mockEvent, mockContext);
+        if (typeof response === "string") {
+            throw new Error("Expected structured API Gateway response");
+        }
+        const structuredResponse = response as APIGatewayProxyStructuredResultV2;
+        expect(structuredResponse.statusCode).toBe(200);
+        expect(structuredResponse.headers?.["Content-Language"]).toMatch(/^es/);
+        const responseBody = JSON.parse(structuredResponse.body ?? "{}");
+        expect(responseBody).toHaveProperty("message", "Solicitud exitosa");
+        expect(responseBody.data).toHaveProperty("greeting", "¡Hola, World! desde la Lambda ${lambdaName}");
+    });`
+        : '';
+
     const indexTestContent =
 `import { handler } from "../src/index";
 import type { APIGatewayProxyStructuredResultV2 } from "aws-lambda";
@@ -399,7 +459,7 @@ describe("${lambdaName} Lambda", () => {
         expect(responseBody).toHaveProperty("status", "success");
         expect(responseBody).toHaveProperty("data");
         expect(responseBody.data).toHaveProperty("greeting", "Hello, World! from Lambda ${lambdaName}");
-    });
+    });${spanishTestBlock}
 });
 `;
     fs.writeFileSync(path.join(testDir, 'index.spec.ts'), indexTestContent, 'utf-8');
@@ -407,9 +467,18 @@ describe("${lambdaName} Lambda", () => {
 
 const generateAuthorizerLambdaFiles = (
     { projectRoot, srcDir, schemasDir, servicesDir, testDir },
-    lambdaName
+    lambdaName,
+    options = {}
 ) => {
     const projectName = getProjectName(projectRoot);
+    const i18nEnabled = Boolean(options.i18n);
+    if (i18nEnabled) {
+        const i18nOpts = typeof options.i18n === 'object' ? options.i18n : {};
+        scaffoldLambdaI18n(projectRoot, lambdaName, {
+            ...i18nOpts,
+            kind: 'authorizer',
+        });
+    }
 
     const schemasContent =
 `import { z } from "zod";
@@ -436,20 +505,31 @@ export type AuthUserData = z.infer<typeof AuthUserSchema>;
 `;
     fs.writeFileSync(path.join(schemasDir, 'index.ts'), schemasContent, 'utf-8');
 
+    const i18nAuthImports = i18nEnabled ? `\nimport type { I18nKey } from "../i18n";` : '';
+    const authContextTypeImport = i18nEnabled
+        ? `import type { FastlbsContext, DefaultWarmContext, DefaultAuthUser } from "@${projectName}/common/context/fastlbsContext";`
+        : `import type { FastlbsContext } from "@${projectName}/common/context/fastlbsContext";`;
+    const authEventParamType = i18nEnabled
+        ? `FastlbsContext<DefaultWarmContext, DefaultAuthUser, I18nKey>`
+        : `FastlbsContext`;
+    const authThrowLine = i18nEnabled
+        ? `        throw HandlerErrorResponse.i18n(401, "auth.unauthorized");`
+        : `        throw new HandlerErrorResponse(401, "Unauthorized");`;
+
     const servicesContent =
 `import { HandlerErrorResponse } from "@${projectName}/common/utils/handlerErrorResponse.util";
-import type { FastlbsContext } from "@${projectName}/common/context/fastlbsContext";
+${authContextTypeImport}
 import type { Context } from "aws-lambda";
-import type { AuthUserData } from "../schemas";
+import type { AuthUserData } from "../schemas";${i18nAuthImports}
 
 export async function service(
-    event: FastlbsContext,
+    event: ${authEventParamType},
     _context: Context
 ): Promise<AuthUserData> {
     const authHeader = event.getHeader("authorization") || "Bearer demo-token";
 
     if (!authHeader || authHeader === "Unauthorized" || authHeader === "Bearer invalid") {
-        throw new HandlerErrorResponse(401, "Unauthorized");
+${authThrowLine}
     }
 
     // Return the authenticated user information.
@@ -463,8 +543,17 @@ export async function service(
 `;
     fs.writeFileSync(path.join(servicesDir, 'index.ts'), servicesContent, 'utf-8');
 
-    const indexContent =
-`import {
+    const indexContent = i18nEnabled
+        ? `import {
+    handlerAuthorizer
+} from "@${projectName}/common/wrappers/handlerResponse.wrapper";
+import type { AuthUserData } from "./schemas";
+import { service } from "./services";
+import { i18n } from "./i18n";
+
+export const handler = handlerAuthorizer<AuthUserData>({ i18n }, service);
+`
+        : `import {
     handlerAuthorizer
 } from "@${projectName}/common/wrappers/handlerResponse.wrapper";
 import type { AuthUserData } from "./schemas";
@@ -511,9 +600,18 @@ describe("${lambdaName} Authorizer Lambda", () => {
 
 const generateAuxiliaryLambdaFiles = (
     { projectRoot, srcDir, schemasDir, servicesDir, testDir },
-    lambdaName
+    lambdaName,
+    options = {}
 ) => {
     const projectName = getProjectName(projectRoot);
+    const i18nEnabled = Boolean(options.i18n);
+    if (i18nEnabled) {
+        const i18nOpts = typeof options.i18n === 'object' ? options.i18n : {};
+        scaffoldLambdaI18n(projectRoot, lambdaName, {
+            ...i18nOpts,
+            kind: 'auxiliary',
+        });
+    }
 
     const schemasContent =
 `import { z } from "zod";
@@ -545,13 +643,21 @@ export type AuxiliaryResult = z.infer<typeof AuxiliaryResultSchema>;
 `;
     fs.writeFileSync(path.join(schemasDir, 'index.ts'), schemasContent, 'utf-8');
 
+    const i18nAuxImports = i18nEnabled ? `\nimport type { I18nKey } from "../i18n";` : '';
+    const auxContextTypeImport = i18nEnabled
+        ? `import type { FastlbsContext, DefaultWarmContext, DefaultAuthUser } from "@${projectName}/common/context/fastlbsContext";`
+        : `import type { FastlbsContext } from "@${projectName}/common/context/fastlbsContext";`;
+    const auxEventParamType = i18nEnabled
+        ? `FastlbsContext<DefaultWarmContext, DefaultAuthUser, I18nKey>`
+        : `FastlbsContext`;
+
     const servicesContent =
-`import type { FastlbsContext } from "@${projectName}/common/context/fastlbsContext";
+`${auxContextTypeImport}
 import type { Context } from "aws-lambda";
-import type { AuxiliaryPayload, AuxiliaryResult } from "../schemas";
+import type { AuxiliaryPayload, AuxiliaryResult } from "../schemas";${i18nAuxImports}
 
 export async function service(
-    event: FastlbsContext,
+    event: ${auxEventParamType},
     _context: Context
 ): Promise<AuxiliaryResult> {
     const payload = event.getPayload<AuxiliaryPayload>();
@@ -565,8 +671,28 @@ export async function service(
 `;
     fs.writeFileSync(path.join(servicesDir, 'index.ts'), servicesContent, 'utf-8');
 
-    const indexContent =
-`import {
+    const indexContent = i18nEnabled
+        ? `import {
+    handlerAuxiliary
+} from "@${projectName}/common/wrappers/handlerResponse.wrapper";
+import {
+    validatorMiddleware,
+    ValidationOptions,
+} from "@${projectName}/common/middlewares/validator.middleware";
+import {
+    AuxiliaryPayloadSchema,
+    type AuxiliaryResult,
+} from "./schemas";
+import { service } from "./services";
+import { i18n } from "./i18n";
+
+export const handler = handlerAuxiliary<AuxiliaryResult>(
+    { i18n },
+    validatorMiddleware(AuxiliaryPayloadSchema, ValidationOptions.PAYLOAD),
+    service
+);
+`
+        : `import {
     handlerAuxiliary
 } from "@${projectName}/common/wrappers/handlerResponse.wrapper";
 import {
@@ -623,12 +749,12 @@ export const createLambda = (
     const kind = resolvedOptions.kind || 'http';
 
     if (kind === 'authorizer') {
-        generateAuthorizerLambdaFiles(folders, lambdaName);
+        generateAuthorizerLambdaFiles(folders, lambdaName, resolvedOptions);
         return;
     }
 
     if (kind === 'auxiliary') {
-        generateAuxiliaryLambdaFiles(folders, lambdaName);
+        generateAuxiliaryLambdaFiles(folders, lambdaName, resolvedOptions);
         return;
     }
 
