@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'path';
 import fs from 'fs';
 import { spawnSync } from 'child_process';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { nameToKebabCase, toPascalCase, toDocConstName } from '../src/utils/string_utils.js';
 import {
     assertValidLambdaName,
@@ -25,6 +25,10 @@ import { createValidatorBaseMiddleware } from '../src/scripts/new_project/servic
 import { createHandlerResponses } from '../src/scripts/new_project/services/create_handler_responses.js';
 import { createZodOpenApiUtil } from '../src/scripts/new_project/services/create_zod_openapi_util.js';
 import { createBaseI18n } from '../src/scripts/new_project/services/create_base_i18n.js';
+import { createBaseServerless } from '../src/scripts/new_project/services/create_base_serverless.js';
+import { autoGenerateServerless } from '../src/scripts/serverless/index.js';
+import { upgradeProjectRuntime } from '../src/scripts/upgrade/index.js';
+import { dump, load } from 'js-yaml';
 import {
     scaffoldLambdaI18n,
     patchHandlerWithI18n,
@@ -1448,6 +1452,312 @@ test('createLambda with i18n, patchHandlerWithI18n on existing lambda, updatePro
         fs.rmSync(tempProj, { recursive: true, force: true });
     }
 });
+
+test('Individual Serverless packaging isolates each lambda zip and restricts swagger-ui-dist to __doc__', () => {
+    const tempProjName = `temp_pkg_${Date.now()}`;
+    const tempProj = path.join(process.cwd(), tempProjName);
+    try {
+        createBaseServerless(tempProjName);
+        const baseCfg = JSON.parse(
+            fs.readFileSync(path.join(tempProj, 'serverlessConfig', 'basicServerlessConfig.json'), 'utf-8')
+        );
+        assert.equal(baseCfg.package.individually, true);
+        assert.deepEqual(baseCfg.package.patterns, ['!**']);
+        assert.equal(baseCfg.build.esbuild, false);
+        assert.deepEqual(baseCfg.functions.__doc__.package.patterns, [
+            'dist/__doc__/**',
+            'node_modules/swagger-ui-dist/**',
+        ]);
+
+        createFunction('orders', 'v1/orders', 'POST', { rootDir: tempProj });
+        const fnCfg = JSON.parse(
+            fs.readFileSync(path.join(tempProj, 'serverlessConfig', 'functions', 'orders.json'), 'utf-8')
+        );
+        assert.deepEqual(fnCfg.orders.package.patterns, ['dist/orders/**']);
+    } finally {
+        fs.rmSync(tempProj, { recursive: true, force: true });
+    }
+});
+
+test('validatorMiddleware persists Zod transformed/coerced data and FastlbsEvent caches JSON.parse once', async () => {
+    const {
+        FastlbsEvent,
+        handlerResponse,
+        validatorMiddleware,
+        ValidationOptions,
+        HandlerStandardResponse,
+    } = await getGeneratedRuntime();
+
+    // 1. Verify FastlbsEvent.getJsonBody() calls JSON.parse at most once
+    let rawJson = JSON.stringify({ count: 5, label: '  hello  ' });
+    const rawEvent = {
+        body: rawJson,
+        headers: { 'Cookie': 'session=abc; theme=dark' },
+        path: '/v1/legacy-rest-path',
+        httpMethod: 'POST',
+        queryStringParameters: null,
+        pathParameters: null,
+    };
+    const ev = new FastlbsEvent(rawEvent, {});
+    // Also verify API Gateway V1 (REST) normalization:
+    assert.equal(ev.rawPath, '/v1/legacy-rest-path');
+    assert.equal(ev.path, '/v1/legacy-rest-path');
+    assert.equal(ev.httpMethod, 'POST');
+    assert.equal(ev.routeKey, 'POST /v1/legacy-rest-path');
+    assert.deepEqual(ev.cookies, ['session=abc', 'theme=dark']);
+    assert.equal(ev.queryStringParameters, undefined);
+
+    const firstBody = ev.getJsonBody();
+    // Mutate underlying raw body string to prove second call returns cached object without re-parsing
+    ev.body = 'INVALID_JSON_THAT_WOULD_FAIL';
+    const secondBody = ev.getJsonBody();
+    assert.strictEqual(firstBody, secondBody);
+
+    // 2. Verify validatorMiddleware saves transformed/defaulted result.data for BODY, QUERYPARAMS, and PATHPARAMS
+    const transformingBodySchema = {
+        safeParse(input) {
+            return {
+                success: true,
+                data: {
+                    name: String(input.name || '').trim().toUpperCase(),
+                    role: input.role || 'member', // default applied
+                },
+            };
+        },
+    };
+    const coercingQuerySchema = {
+        safeParse(input) {
+            return {
+                success: true,
+                data: {
+                    page: Number(input.page ?? 1),
+                    limit: Number(input.limit ?? 25),
+                },
+            };
+        },
+    };
+    const transformingPathSchema = {
+        safeParse(input) {
+            return {
+                success: true,
+                data: {
+                    userId: `usr_${input.userId}`,
+                },
+            };
+        },
+    };
+
+    const handler = handlerResponse(
+        {},
+        validatorMiddleware(transformingPathSchema, ValidationOptions.PATHPARAMS),
+        validatorMiddleware(coercingQuerySchema, ValidationOptions.QUERYPARAMS),
+        validatorMiddleware(transformingBodySchema, ValidationOptions.BODY),
+        async (event) => {
+            return new HandlerStandardResponse(200, {
+                message: 'OK',
+                status: 'success',
+                data: {
+                    body: event.getJsonBody(),
+                    page: event.getQueryParam('page'),
+                    limit: event.getQueryParam('limit'),
+                    validatedQuery: event.getValidatedQuery(),
+                    userId: event.getPathParam('userId'),
+                },
+            });
+        }
+    );
+
+    const res = await handler({
+        body: JSON.stringify({ name: '  luis crespo  ' }),
+        queryStringParameters: { page: '3' },
+        pathParameters: { userId: '42' },
+    });
+    assert.equal(res.statusCode, 200);
+    const payload = JSON.parse(res.body).data;
+    assert.deepEqual(payload.body, { name: 'LUIS CRESPO', role: 'member' });
+    assert.equal(payload.page, 3);
+    assert.equal(payload.limit, 25);
+    assert.deepEqual(payload.validatedQuery, { page: 3, limit: 25 });
+    assert.equal(payload.userId, 'usr_42');
+});
+
+test('autoGenerateServerless performs non-destructive smart-merge preserving user edits in serverless.yml', () => {
+    const tempProjName = `temp_merge_${Date.now()}`;
+    const tempProj = path.join(process.cwd(), tempProjName);
+    try {
+        createBaseServerless(tempProjName);
+        createFunction('orders', 'v1/orders', 'GET', { rootDir: tempProj });
+
+        // Simulate developer editing serverless.yml directly to add CloudFormation resources, IAM roles, VPC, and function memorySize
+        const customServerlessYml = dump({
+            service: tempProjName.toUpperCase(),
+            plugins: ['serverless-offline', 'serverless-prune-plugin'],
+            provider: {
+                name: 'aws',
+                runtime: 'nodejs22.x',
+                region: 'us-east-1',
+                environment: {
+                    DB_HOST: 'aurora.cluster.local',
+                },
+                iam: {
+                    role: {
+                        statements: [
+                            { Effect: 'Allow', Action: ['s3:GetObject'], Resource: 'arn:aws:s3:::my-bucket/*' },
+                        ],
+                    },
+                },
+            },
+            functions: {
+                orders: {
+                    handler: 'dist/orders/index.handler',
+                    memorySize: 1024,
+                    timeout: 30,
+                    layers: ['arn:aws:lambda:us-east-1:123456789012:layer:shared:1'],
+                },
+                customExternalWorker: {
+                    handler: 'external/worker.handler',
+                },
+            },
+            resources: {
+                Resources: {
+                    OrdersTable: {
+                        Type: 'AWS::DynamoDB::Table',
+                        Properties: { TableName: 'Orders' },
+                    },
+                },
+            },
+        });
+        const serverlessYmlPath = path.join(tempProj, 'serverless.yml');
+        fs.writeFileSync(serverlessYmlPath, customServerlessYml, 'utf-8');
+
+        autoGenerateServerless({ projectRoot: tempProj });
+
+        const merged = load(fs.readFileSync(serverlessYmlPath, 'utf-8'));
+        // Preserves custom plugins, provider.environment, provider.iam, resources, external function, and function-level memorySize/layers
+        assert.ok(merged.plugins.includes('serverless-prune-plugin'));
+        assert.equal(merged.provider.environment.DB_HOST, 'aurora.cluster.local');
+        assert.equal(merged.provider.iam.role.statements[0].Action[0], 's3:GetObject');
+        assert.equal(merged.resources.Resources.OrdersTable.Properties.TableName, 'Orders');
+        assert.equal(merged.functions.customExternalWorker.handler, 'external/worker.handler');
+        assert.equal(merged.functions.orders.memorySize, 1024);
+        assert.deepEqual(merged.functions.orders.layers, [
+            'arn:aws:lambda:us-east-1:123456789012:layer:shared:1',
+        ]);
+        // Updates managed events & individual package patterns
+        assert.equal(merged.functions.orders.events[0].http.path, 'v1/orders');
+        assert.deepEqual(merged.functions.orders.package.patterns, ['dist/orders/**']);
+    } finally {
+        fs.rmSync(tempProj, { recursive: true, force: true });
+    }
+});
+
+test('syncLambdaFunctionConfig resolves imported constants, local variables, and httpApi events', () => {
+    const tempProj = fs.mkdtempSync(path.join(repoRoot, 'temp-imported-sync-'));
+    try {
+        const lambdaSrcDir = path.join(tempProj, 'lambdas', 'payments', 'src');
+        fs.mkdirSync(lambdaSrcDir, { recursive: true });
+
+        // Separate config file exporting route and doc constants
+        fs.writeFileSync(
+            path.join(lambdaSrcDir, 'route.config.ts'),
+            `
+            export const PAYMENTS_EVENT = {
+                type: "httpApi",
+                method: "POST",
+                path: "/v2/payments/charge",
+                authorizer: "auth",
+            };
+            export const PAYMENTS_DOC = {
+                summary: "Charge customer card",
+                tags: ["PAYMENTS"],
+            };
+            `,
+            'utf-8'
+        );
+
+        // index.ts imports the constants instead of writing inline object literals
+        fs.writeFileSync(
+            path.join(lambdaSrcDir, 'index.ts'),
+            `
+            import { PAYMENTS_EVENT, PAYMENTS_DOC } from "./route.config";
+            export const handler = handlerResponse(
+                {
+                    event: PAYMENTS_EVENT,
+                    doc: PAYMENTS_DOC,
+                },
+                service
+            );
+            `,
+            'utf-8'
+        );
+
+        const changed = syncLambdaFunctionConfig(tempProj, 'payments');
+        assert.equal(changed, true);
+
+        const fnCfg = JSON.parse(
+            fs.readFileSync(path.join(tempProj, 'serverlessConfig', 'functions', 'payments.json'), 'utf-8')
+        );
+        assert.deepEqual(fnCfg.payments.events, [
+            {
+                httpApi: {
+                    method: 'post',
+                    path: '/v2/payments/charge',
+                    authorizer: { name: 'auth' },
+                },
+            },
+        ]);
+        assert.equal(fnCfg.payments._docMeta.summary, 'Charge customer card');
+        assert.deepEqual(fnCfg.payments._docMeta.tags, ['PAYMENTS']);
+    } finally {
+        fs.rmSync(tempProj, { recursive: true, force: true });
+    }
+});
+
+test('upgradeProjectRuntime detects outdated runtime files, creates .bak backups, and upgrades project', async () => {
+    const tempProjName = `temp_upgrade_${Date.now()}`;
+    const tempProj = path.join(process.cwd(), tempProjName);
+    try {
+        fs.mkdirSync(path.join(tempProj, 'libs', 'common', 'context'), { recursive: true });
+        fs.writeFileSync(
+            path.join(tempProj, 'fastlbs.config.json'),
+            JSON.stringify({ service: tempProjName, frameworkVersion: '1', lambdas: {} }, null, 2),
+            'utf-8'
+        );
+        // Write an old version of fastlbsContext.ts
+        const ctxPath = path.join(tempProj, 'libs', 'common', 'context', 'fastlbsContext.ts');
+        fs.writeFileSync(ctxPath, '// legacy v1 context file\nexport class FastlbsEvent {}\n', 'utf-8');
+
+        const checkReport = await upgradeProjectRuntime({ projectRoot: tempProj, check: true });
+        assert.equal(checkReport.upToDate, false);
+        assert.ok(checkReport.outdatedFiles.includes('libs/common/context/fastlbsContext.ts'));
+
+        const upgradeReport = await upgradeProjectRuntime({ projectRoot: tempProj });
+        assert.equal(upgradeReport.upToDate, true);
+        assert.ok(fs.existsSync(`${ctxPath}.bak`));
+        assert.match(fs.readFileSync(ctxPath, 'utf-8'), /setValidatedData/);
+
+        const checkAfter = await upgradeProjectRuntime({ projectRoot: tempProj, check: true });
+        assert.equal(checkAfter.upToDate, true);
+    } finally {
+        fs.rmSync(tempProj, { recursive: true, force: true });
+    }
+});
+
+test('CLI registers upgrade & non-interactive flags for CI/CD', () => {
+    // Verify CLI flags for non-interactive lambda creation and upgrade command
+    const lambdaHelp = runCli(['lambda', '--help']);
+    assert.equal(lambdaHelp.status, 0);
+    assert.match(lambdaHelp.stdout, /--kind <kind>/);
+    assert.match(lambdaHelp.stdout, /--method <method>/);
+    assert.match(lambdaHelp.stdout, /--path <route>/);
+    assert.match(lambdaHelp.stdout, /--yes/);
+
+    const upgradeHelp = runCli(['upgrade', '--help']);
+    assert.equal(upgradeHelp.status, 0);
+    assert.match(upgradeHelp.stdout, /--check/);
+    assert.match(upgradeHelp.stdout, /--no-backup/);
+});
+
 
 
 

@@ -10,6 +10,7 @@ import { registerTestCommand } from '../src/commands/test_project.js';
 import { registerDropCommand } from '../src/commands/drop_lambda.js';
 import { registerMiddlewareCommand } from '../src/commands/create_middleware.js';
 import { registerI18nCommand } from '../src/commands/i18n.js';
+import { registerUpgradeCommand } from '../src/commands/upgrade.js';
 import { asFastlbsError } from '../src/utils/cli_error.js';
 
 const packageJson = JSON.parse(
@@ -26,8 +27,10 @@ Quick examples:
     $ fastlbs new my-api
     $ fastlbs lambda greeting
     $ fastlbs lambda greeting --i18n --locales en,es
+    $ fastlbs lambda orders --method POST --path /orders --yes
     $ fastlbs i18n greeting --locales en,es,pt
     $ fastlbs i18n --check
+    $ fastlbs upgrade
     $ fastlbs build greeting
     $ fastlbs start
     $ fastlbs start greeting
@@ -45,6 +48,7 @@ registerTestCommand(program);
 registerDropCommand(program);
 registerMiddlewareCommand(program);
 registerI18nCommand(program);
+registerUpgradeCommand(program);
 
 try {
     await program.parseAsync(process.argv);

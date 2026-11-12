@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.1.0] - 2026-11-12
+
+### Added
+- **In-Place Runtime Upgrade Command (`fastlbs upgrade [--check] [--no-backup]`)**:
+  - Tracks `runtimeVersion` in `fastlbs.config.json` and safely updates `libs/common/*` runtime files (`fastlbsContext.ts`, `handlerResponse.wrapper.ts`, `validator.middleware.ts`, `zodOpenApi.util.ts`, `i18n/index.ts`) and Serverless packaging configuration with `.bak` backups.
+- **Persisted Zod Transformations & Single-Parse Body Caching**:
+  - `validatorMiddleware` now stores `result.data` from `schema.safeParse()` via `event.setValidatedData(option, result.data)`.
+  - Added `event.getValidatedQuery<T>()` and `event.getValidatedPathParams<T>()`, and updated `event.getJsonBody<T>()`, `event.getQueryParam()`, `event.getPathParam()`, `event.getHeader()`, and `event.getPayload()` to return Zod-transformed/coerced values (`z.coerce.number()`, `.default()`, `.trim()`, `.transform()`) while parsing JSON bodies at most once per request.
+- **Non-Interactive CLI Flags for CI/CD Automation**:
+  - Added `-k, --kind <http|authorizer|auxiliary>`, `-m, --method <method>`, `-p, --path <path>`, `-v, --api-version <version>`, `--authorizer <name>`, `--before <names>`, `--api-gateway <http|httpApi>`, and `-y, --yes` to `fastlbs lambda <name>`, plus `-y, --yes` to `fastlbs drop <name>`.
+
+### Changed
+- **Per-Lambda Isolated Serverless Packaging (`package.individually: true`)**:
+  - Replaced monolithic `patterns: ["dist/**", "node_modules/**"]` with `package: { individually: true, excludeDevDependencies: true, patterns: ["!**"] }`, per-function `package: { patterns: ["dist/<lambda>/**"] }`, and isolated `node_modules/swagger-ui-dist/**` strictly inside `__doc__` functions.
+  - Added `"build": { "esbuild": false }` in `basicServerlessConfig.json` for Serverless Framework v3 and v4 compatibility.
+- **Non-Destructive `serverless.yml` Smart Merge**:
+  - `autoGenerateServerless()` now parses existing `serverless.yml` files and preserves custom CloudFormation `resources`, `layers`, `provider.iam`, `provider.vpc`, `provider.environment`, extra `plugins`, custom function properties (`memorySize`, `timeout`, `layers`, `environment`), and external functions.
+- **Enhanced Constant Resolution in `lambda_config_sync.js`**:
+  - Resolves local `const`/`let`/`var` identifiers and relative imported constants (`import { EVENT_CONFIG } from "./config"`) in `handlerResponse(options, service)` in addition to inline object literals and `@fastlbs` JSDoc tags.
+- **API Gateway V1 (`http`) & V2 (`httpApi`) Normalization**:
+  - `FastlbsEvent` normalizes V1 (`path`, `httpMethod`, `headers.Cookie`, `null` query/path maps) and V2 (`rawPath`, `requestContext.http.method`, `cookies[]`) seamlessly, and supports `type: "http"` (default) or `type: "httpApi"` in Serverless events.
+- **Incremental Per-Lambda Rebuild in `fastlbs start`**:
+  - File changes inside `lambdas/<name>/` now rebuild only the affected lambda in-place and skip restarting `serverless-offline` unless `serverless.yml` actually changed.
+
+---
+
 ## [2.0.1] - 2026-10-16
 
 ### Added

@@ -128,10 +128,22 @@ export default JestConfigBase;
     fs.writeFileSync(filePath, content.trimStart());
 }
 
+const CLI_PACKAGE_JSON_PATH = new URL('../../../../package.json', import.meta.url);
+function getCliVersion() {
+    try {
+        const pkg = JSON.parse(fs.readFileSync(CLI_PACKAGE_JSON_PATH, 'utf-8'));
+        return pkg.version || '2.0.1';
+    } catch {
+        return '2.0.1';
+    }
+}
+
 function createFastLbsConfig(projectName) {
     const content = {
         "service": projectName,
-        "frameworkVersion": "1",
+        "frameworkVersion": "2",
+        "runtimeVersion": getCliVersion(),
+        "apiGateway": "http",
         "defaultLocale": "en",
         "i18n": {
             "defaultLocale": "en",

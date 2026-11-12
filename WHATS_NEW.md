@@ -26,8 +26,12 @@ In `feature/HU-refactor-code` (FastLBS v2.0), over **5,200 lines of code across 
 | **Serverless Sync** | Manual configuration files in `serverlessConfig/`. | **Bi-directional Auto-Sync**: Routes, methods, CORS, and authorizers are extracted from `@fastlbs` JSDoc and `handlerResponse()` automatically. |
 | **Lambda Types** | Only HTTP endpoints. | **Authorizers (`handlerAuthorizer`)** with AWS IAM policies & **Auxiliary Workers (`handlerAuxiliary`)** for SQS/S3/tasks with `before: [...]` chaining. |
 | **Native i18n Engine** | None (manual string handling per lambda). | **Zero-Dependency Native i18n** (`defineI18n`, `event.t()`, `fastlbs i18n`) with IETF BCP 47 locales, `Accept-Language` negotiation, plurals, localized Zod errors, and OpenAPI `Accept-Language` docs. |
-| **Production Packaging** | Single monolithic build mode. | **Dual Build Strategies**: `--type bundle` (inlined single-file) or `--type modular` (isolated `package.json` for AWS Lambda Layers). |
-| **Reliability & Testing** | Minimal error hints; 0 automated CLI tests. | **Unified `FastlbsError`**, path traversal guards, and **28 comprehensive automated smoke/integration tests**. |
+| **Production Packaging** | Single monolithic build mode (`dist/**` + `node_modules/**`). | **Per-Lambda Isolated Packaging (`package.individually: true`)** + **`--type bundle` / `--type modular`**, isolating `swagger-ui-dist` strictly to `__doc__`. |
+| **Runtime Upgrades** | Copy-only scaffolding (`libs/common/` frozen at creation time). | **`fastlbs upgrade` Command** with `runtimeVersion` tracking and safe `.bak` backups to upgrade `libs/common/` and packaging in existing projects. |
+| **Zod Validation & Body Parsing** | `safeParse` discarded `result.data`; double `JSON.parse` on `getJsonBody()`. | **Persisted Zod Transformations** (`z.coerce`, `.transform()`, `.default()`, `.trim()`) in `event.getJsonBody()`, `event.getValidatedQuery()`, `event.getValidatedPathParams()` + single-parse body cache. |
+| **Serverless Config Sync** | Blind overwrite of `serverless.yml`; regex-only literal parsing. | **Non-Destructive `serverless.yml` Smart Merge** (preserves custom `resources`, `iam`, `vpc`, `layers`, `plugins`) + resolution of local/imported TS constants + dual API Gateway V1 (`http`) & V2 (`httpApi`) normalization. |
+| **Dev & CI/CD DX** | Interactive-only prompts; full rebuild & `serverless-offline` restart on every file save. | **Incremental Per-Lambda Rebuild in `fastlbs start`** (0 restarts on service edits) + full non-interactive CLI flags (`--kind`, `--method`, `--path`, `--yes`) & Serverless v3/v4 compatibility. |
+| **Reliability & Testing** | Minimal error hints; 0 automated CLI tests. | **Unified `FastlbsError`**, path traversal guards, and **35 comprehensive automated smoke/integration tests**. |
 
 ---
 
@@ -254,12 +258,16 @@ export async function createOrderService(
 
 ---
 
-### 7. Interactive CLI & Enterprise Safety
+### 7. Interactive & Non-Interactive CLI, Incremental Watcher & Enterprise Safety
 
-- **Interactive Wizards**: Running `fastlbs lambda <name>` launches an interactive selector asking whether you want an HTTP Endpoint, an Authorizer, or an Auxiliary Lambda, and prompts for route, method, authorizer association, and optional i18n locales.
-- **`FastlbsError`**: Standardized error classes with actionable developer hints and appropriate shell exit codes.
-- **Path Traversal Guards**: Strict project root validation prevents accidental writes outside the project workspace.
-- **Automated Smoke Test Suite**: 28 automated tests in `tests/cli.smoke.test.js` covering every command, parser, context wrapper, i18n engine, and generator.
+- **Per-Lambda Isolated Serverless Packaging (`package.individually: true`)**: Each lambda packages only `dist/<lambda>/**` (a few KB per zip), while `node_modules/swagger-ui-dist/**` is isolated strictly to the `__doc__` functions. Includes `"build": { "esbuild": false }` for seamless Serverless v3 & v4 compatibility.
+- **In-Place Runtime Upgrades (`fastlbs upgrade`)**: Tracks `runtimeVersion` in `fastlbs.config.json` and upgrades `libs/common/*` runtime files and Serverless packaging rules in existing projects (creating `.bak` backups automatically, or checking drift via `fastlbs upgrade --check`).
+- **Persisted Zod Transformations & Single-Parse Body Cache**: `validatorMiddleware` persists `result.data` via `event.setValidatedData(...)`, so `.transform()`, `.default()`, `.trim()`, and `z.coerce.*` take effect in `event.getJsonBody()`, `event.getQueryParam()`, `event.getValidatedQuery()`, `event.getPathParam()`, and `event.getValidatedPathParams()`, while `JSON.parse` executes at most once per request.
+- **Non-Destructive `serverless.yml` Smart Merge & Constant Resolution**: `autoGenerateServerless()` merges changes into existing `serverless.yml` files without erasing custom CloudFormation `resources`, `provider.iam`, `provider.vpc`, `layers`, custom `plugins`, or per-function `timeout`/`memorySize`. Furthermore, `lambda_config_sync.js` resolves both inline literals and local/imported TypeScript constants (`import { EVENT_CONFIG } from "./config"`).
+- **Dual API Gateway V1 (`http`) & V2 (`httpApi`) Normalization**: `FastlbsEvent` normalizes V1 (`path`, `httpMethod`, `headers.Cookie`, `null` query/path maps) and V2 (`rawPath`, `requestContext.http.method`, `cookies[]`) transparently.
+- **Incremental Dev Watcher (`fastlbs start`)**: Modifying a file inside `lambdas/<name>/` recompiles only that single lambda in milliseconds without restarting `serverless-offline` unless routes or `serverless.yml` changed.
+- **Interactive Wizards & Non-Interactive CI/CD Flags**: Run `fastlbs lambda <name>` interactively or pass `--kind`, `--method`, `--path`, `--api-version`, `--authorizer`, `--before`, `--api-gateway`, and `--yes` (`-y`) for automated CI/CD pipelines.
+- **Automated Smoke Test Suite**: 35 automated tests in `tests/cli.smoke.test.js` covering every command, parser, context wrapper, i18n engine, runtime upgrader, and generator.
 
 ---
 

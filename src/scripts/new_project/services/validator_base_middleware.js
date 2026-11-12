@@ -133,15 +133,27 @@ export function validatorMiddleware(
         let dataToValidate: unknown;
         switch (option) {
             case ValidationOptions.BODY:
-                try {
-                    dataToValidate = event.body ? JSON.parse(event.body) : {};
-                } catch {
-                    throw new HandlerErrorResponse(
-                        400,
-                        "Invalid JSON in request body",
-                        undefined,
-                        { messageKey: "common.validation.invalidJson" }
-                    );
+                if (!event.body) {
+                    dataToValidate = {};
+                } else if (typeof event.body === "object") {
+                    dataToValidate = event.body;
+                } else {
+                    try {
+                        const raw = event.isBase64Encoded
+                            ? Buffer.from(event.body, "base64").toString("utf-8")
+                            : event.body;
+                        dataToValidate = JSON.parse(raw);
+                        if (typeof (event as any).setValidatedData === "function") {
+                            (event as any).setValidatedData(ValidationOptions.BODY, dataToValidate);
+                        }
+                    } catch {
+                        throw new HandlerErrorResponse(
+                            400,
+                            "Invalid JSON in request body",
+                            undefined,
+                            { messageKey: "common.validation.invalidJson" }
+                        );
+                    }
                 }
                 break;
             case ValidationOptions.QUERYPARAMS:
@@ -174,6 +186,9 @@ export function validatorMiddleware(
                 errors,
                 { messageKey: "common.validation.invalidRequest" }
             );
+        }
+        if (result.data !== undefined && typeof (event as any).setValidatedData === "function") {
+            (event as any).setValidatedData(option, result.data);
         }
         return await next();
     };

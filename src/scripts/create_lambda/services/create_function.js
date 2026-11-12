@@ -8,33 +8,52 @@ export function createFunction(lambdaName, lambdaPath, method, options = {}) {
     const projectRoot = options.rootDir || getProjectRootOrThrow();
     const kind = options.kind || 'http';
     const authorizerName = options.authorizer || null;
+    const apiGatewayType = options.apiGateway === 'httpApi' ? 'httpApi' : 'http';
+    const cleanPath = lambdaPath ? String(lambdaPath).replace(/^\/+/, '') : '';
 
     const events =
-        kind === 'http' && lambdaPath && method && lambdaPath !== 'NONE' && method !== 'NONE'
+        kind === 'http' && cleanPath && method && cleanPath !== 'NONE' && method !== 'NONE'
             ? [
-                  {
-                      http: {
-                          method: method.toLowerCase(),
-                          path: lambdaPath,
-                          cors: true,
-                          ...(authorizerName
-                              ? {
-                                    authorizer: {
-                                        name: authorizerName,
-                                        resultTtlInSeconds: 0,
-                                        identitySource: 'method.request.header.Authorization',
-                                        type: 'request',
-                                    },
-                                }
-                              : {}),
-                      },
-                  },
+                  apiGatewayType === 'httpApi'
+                      ? {
+                            httpApi: {
+                                method: method.toLowerCase(),
+                                path: `/${cleanPath}`,
+                                ...(authorizerName
+                                    ? {
+                                          authorizer: {
+                                              name: authorizerName,
+                                          },
+                                      }
+                                    : {}),
+                            },
+                        }
+                      : {
+                            http: {
+                                method: method.toLowerCase(),
+                                path: cleanPath,
+                                cors: true,
+                                ...(authorizerName
+                                    ? {
+                                          authorizer: {
+                                              name: authorizerName,
+                                              resultTtlInSeconds: 0,
+                                              identitySource: 'method.request.header.Authorization',
+                                              type: 'request',
+                                          },
+                                      }
+                                    : {}),
+                            },
+                        },
               ]
             : [];
 
     const functionConfig = {
         [lambdaName]: {
             handler: `dist/${lambdaName}/index.handler`,
+            package: {
+                patterns: [`dist/${lambdaName}/**`],
+            },
             events,
             ...(kind !== 'http' ? { _lambdaKind: kind } : {}),
         },

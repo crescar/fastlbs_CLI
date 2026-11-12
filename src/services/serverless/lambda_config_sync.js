@@ -210,12 +210,105 @@ function parseSimpleObjectLiteral(blockStr) {
 }
 
 /**
+ * Resolves an identifier (e.g. `event: ORDER_EVENT`) defined in the same file
+ * (`const ORDER_EVENT = { ... }`) or imported from a relative module (`import { ORDER_EVENT } from "./config"`).
+ */
+function resolveIdentifierBlock(sourceCode, identifierName, sourceFilePath = null) {
+    if (!identifierName || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(identifierName)) {
+        return null;
+    }
+
+    // 1. Look for `const/let/var <identifierName> = { ... }` or `[ ... ]` in the same file
+    const declRegex = new RegExp(
+        `\\b(?:const|let|var)\\s+${identifierName}\\s*(?::[^=]+)?=\\s*([\\[{])`,
+        'm'
+    );
+    const localMatch = sourceCode.match(declRegex);
+    if (localMatch && localMatch.index !== undefined) {
+        const openChar = localMatch[1];
+        const closeChar = openChar === '{' ? '}' : ']';
+        const openIndex = localMatch.index + localMatch[0].lastIndexOf(openChar);
+        const closeIndex = findMatchingToken(sourceCode, openIndex, openChar, closeChar);
+        if (closeIndex !== -1) {
+            return sourceCode.slice(openIndex, closeIndex + 1);
+        }
+    }
+
+    // 2. If `sourceFilePath` is available, check relative imports: `import { ..., <identifierName>, ... } from "./..."`
+    if (sourceFilePath) {
+        const importMatches = [
+            ...sourceCode.matchAll(/import\s+\{([^}]+)\}\s+from\s+["'](\.[^"']+)["']/g),
+        ];
+        for (const imp of importMatches) {
+            const specifiers = imp[1].split(',').map((s) => s.trim());
+            for (const spec of specifiers) {
+                const parts = spec.split(/\s+as\s+/);
+                const exportedName = parts[0].trim();
+                const localAlias = (parts[1] || parts[0]).trim();
+                if (localAlias === identifierName) {
+                    const baseDir = path.dirname(sourceFilePath);
+                    const rawRel = imp[2];
+                    const candidates = [
+                        path.resolve(baseDir, rawRel),
+                        path.resolve(baseDir, `${rawRel}.ts`),
+                        path.resolve(baseDir, `${rawRel}.js`),
+                        path.resolve(baseDir, rawRel, 'index.ts'),
+                        path.resolve(baseDir, rawRel, 'index.js'),
+                    ];
+                    for (const candidatePath of candidates) {
+                        if (fs.existsSync(candidatePath) && fs.statSync(candidatePath).isFile()) {
+                            const importedSource = fs.readFileSync(candidatePath, 'utf-8');
+                            const resolved = resolveIdentifierBlock(
+                                importedSource,
+                                exportedName,
+                                candidatePath
+                            );
+                            if (resolved) return resolved;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Extracts a property value when it is either an inline `{...}`/`[...]` block or a variable/constant identifier.
+ */
+function extractPropertyBlockOrIdentifier(objectLiteralStr, propName, fullSourceCode = '', sourceFilePath = null) {
+    const inlineBlock = extractPropertyBlock(objectLiteralStr, propName);
+    if (inlineBlock) {
+        return inlineBlock;
+    }
+
+    // Check if property is assigned an identifier: `event: MY_EVENT_CONFIG` or shorthand `{ event }`
+    const idRegex = new RegExp(`(?:^|[,{\\s])${propName}\\s*:\\s*([A-Za-z_$][A-Za-z0-9_$]*)\\b`, 'm');
+    const idMatch = objectLiteralStr.match(idRegex);
+    if (idMatch && idMatch[1] && idMatch[1] !== 'true' && idMatch[1] !== 'false' && idMatch[1] !== 'null') {
+        return resolveIdentifierBlock(fullSourceCode, idMatch[1], sourceFilePath);
+    }
+
+    return null;
+}
+
+/**
  * Extracts `event` and `doc` configurations from `handlerResponse({ ... }, ...)` in source code.
  */
-export function parseHandlerResponseOptions(sourceCode) {
+export function parseHandlerResponseOptions(sourceCode, sourceFilePath = null) {
     const callRegex = /\b(?:handlerResponse|handlerAuthorizer|handlerAuxiliary)\s*(?:<[\s\S]*?>)?\s*\(\s*\{/m;
     const match = sourceCode.match(callRegex);
     if (!match || match.index === undefined) {
+        // Also check if the entire options object itself is a variable: `handlerResponse(HANDLER_OPTIONS, service)`
+        const varCallRegex = /\b(?:handlerResponse|handlerAuthorizer|handlerAuxiliary)\s*(?:<[\s\S]*?>)?\s*\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*,/m;
+        const varMatch = sourceCode.match(varCallRegex);
+        if (varMatch && varMatch[1]) {
+            const resolvedOptionsBlock = resolveIdentifierBlock(sourceCode, varMatch[1], sourceFilePath);
+            if (resolvedOptionsBlock && resolvedOptionsBlock.startsWith('{')) {
+                return parseOptionsBlockString(resolvedOptionsBlock, sourceCode, sourceFilePath);
+            }
+        }
         return { events: null, docMeta: null };
     }
 
@@ -226,9 +319,22 @@ export function parseHandlerResponseOptions(sourceCode) {
     }
 
     const optionsObjectStr = sourceCode.slice(openBraceIndex, closeBraceIndex + 1);
+    return parseOptionsBlockString(optionsObjectStr, sourceCode, sourceFilePath);
+}
 
-    const eventBlockStr = extractPropertyBlock(optionsObjectStr, 'event');
-    const docBlockStr = extractPropertyBlock(optionsObjectStr, 'doc');
+function parseOptionsBlockString(optionsObjectStr, fullSourceCode = '', sourceFilePath = null) {
+    const eventBlockStr = extractPropertyBlockOrIdentifier(
+        optionsObjectStr,
+        'event',
+        fullSourceCode,
+        sourceFilePath
+    );
+    const docBlockStr = extractPropertyBlockOrIdentifier(
+        optionsObjectStr,
+        'doc',
+        fullSourceCode,
+        sourceFilePath
+    );
     const topLevelAuthorizerMatch = optionsObjectStr.match(/\bauthorizer\s*:\s*["'`]([^"'`]+)["'`]/);
     const topLevelAuthorizer = topLevelAuthorizerMatch ? topLevelAuthorizerMatch[1] : null;
 
@@ -239,7 +345,7 @@ export function parseHandlerResponseOptions(sourceCode) {
             events = Array.isArray(parsedEvent) ? parsedEvent : [parsedEvent];
             if (topLevelAuthorizer) {
                 events = events.map((evt) =>
-                    (!evt.type || evt.type === 'http') && !evt.authorizer
+                    (!evt.type || evt.type === 'http' || evt.type === 'httpApi') && !evt.authorizer
                         ? { ...evt, authorizer: topLevelAuthorizer }
                         : evt
                 );
@@ -297,8 +403,8 @@ export function normalizeServerlessEvents(rawEvents) {
     for (const evt of list) {
         if (!evt || typeof evt !== 'object') continue;
 
-        // Already a raw Serverless event (e.g. { http: ... }, { schedule: ... }, { sqs: ... })
-        if (evt.http || evt.schedule || evt.sqs || evt.s3 || evt.sns || evt.eventBridge || evt.websocket) {
+        // Already a raw Serverless event (e.g. { http: ... }, { httpApi: ... }, { schedule: ... }, { sqs: ... })
+        if (evt.http || evt.httpApi || evt.schedule || evt.sqs || evt.s3 || evt.sns || evt.eventBridge || evt.websocket) {
             if (evt.http && typeof evt.http === 'object' && evt.http.path) {
                 const authorizerObj = normalizeAuthorizerObject(evt.http.authorizer);
                 normalized.push({
@@ -308,6 +414,15 @@ export function normalizeServerlessEvents(rawEvents) {
                         path: String(evt.http.path).replace(/^\/+/, ''),
                         cors: evt.http.cors !== undefined ? Boolean(evt.http.cors) : true,
                         ...(authorizerObj ? { authorizer: authorizerObj } : {}),
+                    },
+                });
+            } else if (evt.httpApi && typeof evt.httpApi === 'object' && evt.httpApi.path) {
+                const cleanPath = String(evt.httpApi.path).replace(/^\/+/, '');
+                normalized.push({
+                    httpApi: {
+                        ...evt.httpApi,
+                        method: String(evt.httpApi.method || 'get').toLowerCase(),
+                        path: `/${cleanPath}`,
                     },
                 });
             } else {
@@ -326,6 +441,16 @@ export function normalizeServerlessEvents(rawEvents) {
                     path: String(evt.path).replace(/^\/+/, ''),
                     cors: evt.cors !== undefined ? Boolean(evt.cors) : true,
                     ...(authorizerObj ? { authorizer: authorizerObj } : {}),
+                },
+            });
+        } else if ((eventType === 'httpapi' || eventType === 'http-api') && evt.method && evt.path) {
+            const cleanPath = String(evt.path).replace(/^\/+/, '');
+            const authName = typeof evt.authorizer === 'string' ? evt.authorizer : evt.authorizer?.name;
+            normalized.push({
+                httpApi: {
+                    method: String(evt.method).toLowerCase(),
+                    path: `/${cleanPath}`,
+                    ...(authName ? { authorizer: { name: authName } } : {}),
                 },
             });
         } else if (eventType === 'schedule' && evt.rate) {
@@ -357,13 +482,14 @@ export function normalizeServerlessEvents(rawEvents) {
 /**
  * Extracts combined event and documentation metadata from a lambda's source code.
  */
-export function extractLambdaMetadataFromSource(sourceCode) {
+export function extractLambdaMetadataFromSource(sourceCode, _lambdaName = null, options = {}) {
+    const sourceFilePath = options?.filePath || null;
     const isAuthorizer = /\bhandlerAuthorizer\s*(?:<[\s\S]*?>)?\s*\(/m.test(sourceCode);
     const isAuxiliary = /\bhandlerAuxiliary\s*(?:<[\s\S]*?>)?\s*\(/m.test(sourceCode);
     const lambdaKind = isAuthorizer ? 'authorizer' : isAuxiliary ? 'auxiliary' : 'http';
     const isNonHttpHelper = lambdaKind !== 'http';
     const jsDoc = parseJsDocAnnotations(sourceCode);
-    const handlerOpts = parseHandlerResponseOptions(sourceCode);
+    const handlerOpts = parseHandlerResponseOptions(sourceCode, sourceFilePath);
 
     const rawEvents = handlerOpts.events || jsDoc.events;
     const normalizedEvents = normalizeServerlessEvents(rawEvents);
@@ -397,7 +523,11 @@ export function syncLambdaFunctionConfig(projectRoot, lambdaName) {
     }
 
     const sourceCode = fs.readFileSync(lambdaEntryPath, 'utf-8');
-    const { isNonHttpHelper, events, docMeta } = extractLambdaMetadataFromSource(sourceCode);
+    const { isNonHttpHelper, events, docMeta } = extractLambdaMetadataFromSource(
+        sourceCode,
+        lambdaName,
+        { filePath: lambdaEntryPath, projectRoot }
+    );
 
     const functionsDir = path.join(projectRoot, 'serverlessConfig', 'functions');
     fs.mkdirSync(functionsDir, { recursive: true });
@@ -432,6 +562,9 @@ export function syncLambdaFunctionConfig(projectRoot, lambdaName) {
     const updatedFnBlock = {
         ...currentFnBlock,
         handler: currentFnBlock.handler || `dist/${lambdaName}/index.handler`,
+        package: currentFnBlock.package || {
+            patterns: [`dist/${lambdaName}/**`],
+        },
         events: resolvedEvents,
     };
 

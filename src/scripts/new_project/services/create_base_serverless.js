@@ -2,8 +2,17 @@ import fs from 'fs';
 import path from 'path';
 
 export function createBaseServerless(projectName) {
+    const docPackage = {
+        "patterns": [
+            "dist/__doc__/**",
+            "node_modules/swagger-ui-dist/**"
+        ]
+    };
     const content = {
         "service": projectName.toUpperCase(),
+        "build": {
+            "esbuild": false
+        },
         "plugins": ["serverless-offline"],
         "provider": {
             "name": "aws",
@@ -12,11 +21,10 @@ export function createBaseServerless(projectName) {
             "timeout": 60
         },
         "package": {
+            "individually": true,
             "excludeDevDependencies": true,
             "patterns": [
-                "dist/**",
-                "node_modules/**",
-                "package.json"
+                "!**"
             ]
         },
         "custom": {
@@ -38,6 +46,7 @@ export function createBaseServerless(projectName) {
         "functions": {
             "__doc__": {
                 "handler": "dist/__doc__/index.handlerSwaggerUI",
+                "package": docPackage,
                 "events": [
                     {
                         "http": {
@@ -50,6 +59,7 @@ export function createBaseServerless(projectName) {
             },
             "__doc__/json": {
                 "handler": "dist/__doc__/index.handlerSwaggerJson",
+                "package": docPackage,
                 "events": [
                     {
                         "http": {
@@ -62,6 +72,7 @@ export function createBaseServerless(projectName) {
             },
             "__doc__/static": {
                 "handler": "dist/__doc__/index.handlerSwaggerStatic",
+                "package": docPackage,
                 "events": [
                     {
                         "http": {

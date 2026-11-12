@@ -27,18 +27,22 @@ function dropServerlessConfig(projectRoot, lambdaName) {
     }
 }
 
-export async function dropLambdaFunction(lambdaName) {
+export async function dropLambdaFunction(lambdaName, options = {}) {
     assertValidLambdaName(lambdaName);
     const projectRoot = getProjectRootOrThrow();
 
-    const response = await enquirer.prompt({
-        type: 'confirm',
-        name: 'confirmDrop',
-        message: pc.yellow(`Are you sure you want to drop the lambda "${lambdaName}"? This action cannot be undone.`),
-        initial: false
-    });
+    let confirmed = Boolean(options.yes || !process.stdin.isTTY);
+    if (!confirmed) {
+        const response = await enquirer.prompt({
+            type: 'confirm',
+            name: 'confirmDrop',
+            message: pc.yellow(`Are you sure you want to drop the lambda "${lambdaName}"? This action cannot be undone.`),
+            initial: false
+        });
+        confirmed = Boolean(response.confirmDrop);
+    }
 
-    if (!response.confirmDrop) {
+    if (!confirmed) {
         console.log(pc.yellow('Lambda drop cancelled.'));
         return;
     }
@@ -53,7 +57,7 @@ export async function dropLambdaFunction(lambdaName) {
     dropFastlbsConfig(projectRoot, lambdaName);
     unregisterLambdaDoc(projectRoot, lambdaName);
     dropServerlessConfig(projectRoot, lambdaName);
-    autoGenerateServerless();
+    autoGenerateServerless({ removeFunctions: [lambdaName] });
 
     const figletText = await new Promise((resolve) => {
         figlet('Lambda Dropped!', { font: 'Standard' }, (err, data) => {

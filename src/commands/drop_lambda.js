@@ -5,13 +5,15 @@ export function registerDropCommand(program) {
         .command('drop <lambda-name>')
         .alias('remove')
         .description('Remove a lambda from the project (code, config, docs, and serverless function)')
+        .option('-y, --yes', 'Skip interactive confirmation prompt')
         .addHelpText('after', `
 Examples:
     $ fastlbs drop greeting
+    $ fastlbs drop greeting --yes
     $ fastlbs remove users-create
 `)
-        .action(async (lambdaName) => {
-            await dropLambdaFunction(lambdaName);
+        .action(async (lambdaName, options) => {
+            await dropLambdaFunction(lambdaName, options);
         });
 }
 

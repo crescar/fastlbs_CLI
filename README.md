@@ -693,12 +693,13 @@ export const CreateOrderBodySchema = z.object({
 | Command | Description | Example |
 | :--- | :--- | :--- |
 | `fastlbs new <name>` | Scaffolds a new enterprise TypeScript project | `fastlbs new my-api` |
-| `fastlbs lambda <name>` | Interactively generates an HTTP, Authorizer, or Auxiliary Lambda (supports `--i18n`) | `fastlbs lambda getUsers --i18n` |
+| `fastlbs lambda <name>` | Interactively or via CLI flags (`--kind`, `--method`, `--path`, `--yes`, `--i18n`) generates an HTTP, Authorizer, or Auxiliary Lambda | `fastlbs lambda getUsers -m GET -p users -y` |
 | `fastlbs i18n [name]` | Adds, updates, or validates (`--check`) native i18n translations for a lambda or project | `fastlbs i18n getUsers --locales en,es` |
-| `fastlbs start [name]` | Runs local development server with Serverless Offline | `fastlbs start` or `fastlbs start getUsers` |
+| `fastlbs upgrade` | Upgrades `libs/common/` runtime files and per-lambda Serverless packaging in place (`--check`, `--no-backup`) | `fastlbs upgrade` or `fastlbs upgrade --check` |
+| `fastlbs start [name]` | Runs local development server with incremental per-lambda rebuilds | `fastlbs start` or `fastlbs start getUsers` |
 | `fastlbs build <name>` | Compiles lambda to JavaScript (`--type bundle` or `--type modular`) | `fastlbs build getUsers --type modular` |
 | `fastlbs test [name]` | Runs Jest unit and integration tests | `fastlbs test` or `fastlbs test getUsers` |
-| `fastlbs drop <name>` | Safely deletes a lambda and cleans up routes, docs, and configs | `fastlbs drop oldService` |
+| `fastlbs drop <name>` | Safely deletes a lambda and cleans up routes, docs, and configs (`-y, --yes`) | `fastlbs drop oldService -y` |
 | `fastlbs create-middleware <name>` | Scaffolds a reusable FastLBS middleware | `fastlbs create-middleware rateLimit` |
 
 ---

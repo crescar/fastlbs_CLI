@@ -692,12 +692,13 @@ export const CrearPedidoBodySchema = z.object({
 | Comando | Descripción | Ejemplo de Uso |
 | :--- | :--- | :--- |
 | `fastlbs new <nombre>` | Crea un nuevo proyecto empresarial con TypeScript | `fastlbs new mi-api` |
-| `fastlbs lambda <nombre>` | Asistente interactivo para lambdas HTTP, Autorizadoras o Auxiliares (soporta `--i18n`) | `fastlbs lambda obtenerUsuarios --i18n` |
+| `fastlbs lambda <nombre>` | Genera lambdas HTTP, Autorizadoras o Auxiliares de forma interactiva o no interactiva (`--kind`, `--method`, `--path`, `--yes`, `--i18n`) | `fastlbs lambda obtenerUsuarios -m GET -p users -y` |
 | `fastlbs i18n [nombre]` | Agrega, actualiza o valida (`--check`) traducciones i18n nativas en una lambda o proyecto | `fastlbs i18n obtenerUsuarios --locales en,es` |
-| `fastlbs start [nombre]` | Inicia el servidor de desarrollo local con Serverless Offline | `fastlbs start` o `fastlbs start obtenerUsuarios` |
+| `fastlbs upgrade` | Actualiza el runtime en `libs/common/` y el empaquetado aislado de Serverless con respaldos `.bak` (`--check`, `--no-backup`) | `fastlbs upgrade` o `fastlbs upgrade --check` |
+| `fastlbs start [nombre]` | Inicia el servidor de desarrollo local con recompilación incremental por lambda | `fastlbs start` o `fastlbs start obtenerUsuarios` |
 | `fastlbs build <nombre>` | Compila a JavaScript (`--type bundle` o `--type modular`) | `fastlbs build obtenerUsuarios --type modular` |
 | `fastlbs test [nombre]` | Ejecuta pruebas unitarias y de integración con Jest | `fastlbs test` o `fastlbs test obtenerUsuarios` |
-| `fastlbs drop <nombre>` | Elimina una lambda y limpia sus rutas, docs y configuraciones | `fastlbs drop servicioAntiguo` |
+| `fastlbs drop <nombre>` | Elimina una lambda y limpia sus rutas, docs y configuraciones (`-y, --yes`) | `fastlbs drop servicioAntiguo -y` |
 | `fastlbs create-middleware <nombre>` | Genera un middleware reutilizable de FastLBS | `fastlbs create-middleware limitePeticiones` |
 
 ---
