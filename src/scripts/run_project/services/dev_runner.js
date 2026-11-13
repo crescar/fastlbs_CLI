@@ -5,12 +5,15 @@ import { pathToFileURL } from 'url';
 import { clearConsole } from '../../../utils/clear_console.js';
 import { getRegisteredLambdaNames } from './lambda_registry.js';
 import { getProjectRootOrThrow } from '../../../utils/project_context.js';
+import { resolvePackageManager, getPackageManagerCommands } from '../../../utils/package_manager.js';
 
 const DOC_LAMBDA_NAME = '__doc__';
 const ALL_LAMBDAS_FLAG = '__all__';
 
 function startProjectServer(projectRoot) {
-    return spawn('npm', ['run', 'start'], {
+    const packageManager = resolvePackageManager(projectRoot);
+    const [command, args] = getPackageManagerCommands(packageManager).run('start');
+    return spawn(command, args, {
         stdio: 'inherit',
         shell: true,
         cwd: projectRoot,

@@ -25,6 +25,7 @@ program
     .addHelpText('after', `
 Quick examples:
     $ fastlbs new my-api
+    $ fastlbs new my-api --package-manager pnpm
     $ fastlbs lambda greeting
     $ fastlbs lambda greeting --i18n --locales en,es
     $ fastlbs lambda orders --method POST --path /orders --yes

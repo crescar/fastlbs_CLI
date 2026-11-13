@@ -133,6 +133,17 @@ fastlbs new mi-api-empresarial
 cd mi-api-empresarial
 ```
 
+En modo interactivo podrás elegir tu manejador de paquetes (`npm`, `pnpm` o `yarn`), o indicarlo directamente por bandera:
+
+```bash
+fastlbs new mi-api-empresarial --package-manager pnpm
+fastlbs new mi-api-empresarial --pm yarn --skip-install --yes
+```
+
+- **`pnpm`**: Genera `pnpm-workspace.yaml` y `.npmrc` (`node-linker=hoisted`) para que `node_modules/swagger-ui-dist` y Jest funcionen sin problemas al empaquetar con Serverless.
+- **`yarn` (v2+ / Berry)**: Genera automáticamente `.yarnrc.yml` (`nodeLinker: node-modules`) para mantener compatibilidad total con Serverless, esbuild y Jest.
+- El manejador elegido se guarda en `fastlbs.config.json` (`packageManager`) y es respetado automáticamente por `fastlbs lambda`, `fastlbs start`, `fastlbs test`, `fastlbs build` y `fastlbs upgrade`.
+
 ### 3. Generar una Lambda HTTP
 
 ```bash
@@ -691,7 +702,7 @@ export const CrearPedidoBodySchema = z.object({
 
 | Comando | Descripción | Ejemplo de Uso |
 | :--- | :--- | :--- |
-| `fastlbs new <nombre>` | Crea un nuevo proyecto empresarial con TypeScript | `fastlbs new mi-api` |
+| `fastlbs new <nombre>` | Crea un nuevo proyecto empresarial con TypeScript (`--pm`, `--package-manager`, `--skip-install`, `-y, --yes`) | `fastlbs new mi-api --pm pnpm` |
 | `fastlbs lambda <nombre>` | Genera lambdas HTTP, Autorizadoras o Auxiliares de forma interactiva o no interactiva (`--kind`, `--method`, `--path`, `--yes`, `--i18n`) | `fastlbs lambda obtenerUsuarios -m GET -p users -y` |
 | `fastlbs i18n [nombre]` | Agrega, actualiza o valida (`--check`) traducciones i18n nativas en una lambda o proyecto | `fastlbs i18n obtenerUsuarios --locales en,es` |
 | `fastlbs upgrade` | Actualiza el runtime en `libs/common/` y el empaquetado aislado de Serverless con respaldos `.bak` (`--check`, `--no-backup`) | `fastlbs upgrade` o `fastlbs upgrade --check` |

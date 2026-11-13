@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import enquirer from 'enquirer';
 import pc from 'picocolors';
 import { existLambda } from './services/exist_lambda.js';
@@ -12,6 +14,7 @@ import { autoGenerateServerless } from '../serverless/index.js';
 import { assertValidLambdaName } from '../../utils/cli_validation.js';
 import { FastlbsError } from '../../utils/cli_error.js';
 import { findProjectRoot } from '../../utils/project_context.js';
+import { resolvePackageManager, getPackageManagerCommands } from '../../utils/package_manager.js';
 import {
     getProjectI18nConfig,
     resolveI18nSettings,
@@ -77,6 +80,26 @@ async function promptOrResolveI18n(projectRoot, cliOptions = {}, isNonInteractiv
     });
 
     return i18nConfig;
+}
+
+function printLambdaNextSteps(projectRoot, lambdaName) {
+    const packageManager = resolvePackageManager(projectRoot);
+    const { installCommandString, run } = getPackageManagerCommands(packageManager);
+    const [runCmd, runArgs] = run('start');
+
+    if (!fs.existsSync(path.join(projectRoot, 'node_modules'))) {
+        console.log(
+            pc.yellow(
+                `  Note: node_modules not found. Run "${installCommandString}" before running or testing.`
+            )
+        );
+    }
+    console.log(pc.dim(`  Package manager: ${packageManager}`));
+    console.log(
+        pc.dim(
+            `  Next: fastlbs start ${lambdaName} (or ${runCmd} ${runArgs.join(' ')}) | fastlbs test ${lambdaName}`
+        )
+    );
 }
 
 export async function createLambdaFunction(lambdaName, cliOptions = {}) {
@@ -176,6 +199,7 @@ export async function createLambdaFunction(lambdaName, cliOptions = {}) {
                 )
             );
         }
+        printLambdaNextSteps(projectRoot, lambdaName);
         return;
     }
 
@@ -330,4 +354,5 @@ export async function createLambdaFunction(lambdaName, cliOptions = {}) {
     if (authorizer) {
         console.log(pc.cyan(`  Auth:    Protected by Authorizer Lambda "${authorizer}"`));
     }
+    printLambdaNextSteps(projectRoot, lambdaName);
 }

@@ -10,6 +10,7 @@ import { createZodOpenApiUtil } from '../new_project/services/create_zod_openapi
 import { ensureCommonI18n } from '../new_project/services/create_base_i18n.js';
 import { getProjectI18nConfig } from '../../services/i18n/i18n_scaffolder.js';
 import { autoGenerateServerless } from '../serverless/index.js';
+import { resolvePackageManager } from '../../utils/package_manager.js';
 
 const CLI_PACKAGE_JSON_PATH = new URL('../../../package.json', import.meta.url);
 
@@ -197,6 +198,9 @@ export async function upgradeProjectRuntime(options = {}) {
         // Ignore if serverlessConfig is incomplete in test fixtures
     }
 
+    const detectedPackageManager = resolvePackageManager(projectRoot);
+    let packageManagerUpdated = false;
+
     if (fs.existsSync(configPath)) {
         try {
             const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
@@ -204,6 +208,10 @@ export async function upgradeProjectRuntime(options = {}) {
             cfg.frameworkVersion = '2';
             if (!cfg.apiGateway) {
                 cfg.apiGateway = 'http';
+            }
+            if (!cfg.packageManager) {
+                cfg.packageManager = detectedPackageManager;
+                packageManagerUpdated = true;
             }
             fs.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}\n`, 'utf-8');
         } catch {
@@ -223,6 +231,11 @@ export async function upgradeProjectRuntime(options = {}) {
     if (packagingUpdated) {
         console.log(pc.cyan(`  Serverless packaging upgraded to individual per-lambda bundles.`));
     }
+    if (packageManagerUpdated) {
+        console.log(
+            pc.cyan(`  Detected and saved packageManager "${detectedPackageManager}" in fastlbs.config.json.`)
+        );
+    }
 
     return {
         upToDate: true,
@@ -230,5 +243,7 @@ export async function upgradeProjectRuntime(options = {}) {
         updated,
         backups,
         packagingUpdated,
+        packageManager: detectedPackageManager,
+        packageManagerUpdated,
     };
 }

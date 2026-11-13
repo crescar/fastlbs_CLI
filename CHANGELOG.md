@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Multi-Package-Manager Support (`npm`, `pnpm`, `yarn`)**:
+  - `fastlbs new <name>` now prompts interactively to choose `npm`, `pnpm`, or `yarn`, or accepts `--pm, --package-manager <pm>`, `--skip-install`, and `-y, --yes` (auto-detecting from `npm_config_user_agent` when omitted in non-interactive mode).
+  - Persists `packageManager` in `fastlbs.config.json` and writes Corepack `packageManager: "<pm>@<version>"` into `package.json`.
+  - Automatically generates `pnpm-workspace.yaml` + `.npmrc` (`node-linker=hoisted`) for `pnpm` (omitting `package.json#workspaces`) and `.yarnrc.yml` (`nodeLinker: node-modules`) when Yarn Berry (v2+) is detected.
+  - Updated `fastlbs lambda`, `fastlbs start`, `fastlbs test`, `fastlbs build`, and `fastlbs upgrade` to resolve and execute commands/hints using the project's configured package manager (with lockfile fallback for existing projects).
+
+---
+
 ## [3.1.0] - 2026-11-12
 
 ### Added

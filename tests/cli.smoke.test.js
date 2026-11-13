@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { spawnSync } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { nameToKebabCase, toPascalCase, toDocConstName } from '../src/utils/string_utils.js';
@@ -42,6 +43,15 @@ import {
 } from '../src/services/serverless/lambda_config_sync.js';
 import { buildMethodValidationTemplate, createLambda } from '../src/scripts/create_lambda/services/create_lambda.js';
 import { createFunction } from '../src/scripts/create_lambda/services/create_function.js';
+import {
+    normalizePackageManager,
+    assertValidPackageManager,
+    detectPackageManagerFromUserAgent,
+    detectPackageManagerFromLockfile,
+    resolvePackageManager,
+    getPackageManagerCommands,
+    isYarnBerry,
+} from '../src/utils/package_manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1756,6 +1766,147 @@ test('CLI registers upgrade & non-interactive flags for CI/CD', () => {
     assert.equal(upgradeHelp.status, 0);
     assert.match(upgradeHelp.stdout, /--check/);
     assert.match(upgradeHelp.stdout, /--no-backup/);
+});
+
+test('package_manager utilities validate, detect lockfiles/user-agent, and build PM commands', () => {
+    assert.equal(normalizePackageManager('  PNPM '), 'pnpm');
+    assert.equal(normalizePackageManager('yarm'), null);
+    assert.equal(assertValidPackageManager('YARN'), 'yarn');
+    assert.throws(() => assertValidPackageManager('bun'), { code: 'INVALID_PACKAGE_MANAGER' });
+
+    assert.equal(detectPackageManagerFromUserAgent('pnpm/11.4.0 npm/? node/v22.0.0'), 'pnpm');
+    assert.equal(detectPackageManagerFromUserAgent('yarn/1.22.22 npm/? node/v22.0.0'), 'yarn');
+    assert.equal(detectPackageManagerFromUserAgent('npm/10.9.7 node/v22.0.0'), 'npm');
+    assert.equal(detectPackageManagerFromUserAgent(undefined), 'npm');
+
+    assert.equal(isYarnBerry('1.22.22'), false);
+    assert.equal(isYarnBerry('4.5.0'), true);
+
+    assert.deepEqual(getPackageManagerCommands('npm').exec('jest', ['--ci']), ['npx', ['jest', '--ci']]);
+    assert.deepEqual(getPackageManagerCommands('pnpm').exec('jest', ['--ci']), ['pnpm', ['exec', 'jest', '--ci']]);
+    assert.deepEqual(getPackageManagerCommands('yarn').exec('jest', ['--ci']), ['yarn', ['jest', '--ci']]);
+    assert.equal(getPackageManagerCommands('pnpm').prodInstall, 'pnpm install --prod');
+    assert.equal(getPackageManagerCommands('yarn', { yarnBerry: false }).prodInstall, 'yarn install --production');
+    assert.equal(getPackageManagerCommands('yarn', { yarnBerry: true }).prodInstall, 'yarn workspaces focus --production');
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fastlbs-pm-resolve-'));
+    try {
+        assert.equal(resolvePackageManager(tempRoot), 'npm');
+
+        fs.writeFileSync(path.join(tempRoot, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n', 'utf-8');
+        assert.equal(detectPackageManagerFromLockfile(tempRoot), 'pnpm');
+        assert.equal(resolvePackageManager(tempRoot), 'pnpm');
+
+        fs.writeFileSync(
+            path.join(tempRoot, 'fastlbs.config.json'),
+            JSON.stringify({ service: 'demo', packageManager: 'yarn' }, null, 2),
+            'utf-8'
+        );
+        assert.equal(resolvePackageManager(tempRoot), 'yarn');
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('fastlbs new supports --package-manager / --skip-install, rejects invalid PM, and integrates with lambda/build/test', () => {
+    const newHelp = runCli(['new', '--help']);
+    assert.equal(newHelp.status, 0, newHelp.stderr);
+    assert.match(newHelp.stdout, /--pm, --package-manager <pm>/);
+    assert.match(newHelp.stdout, /--skip-install/);
+    assert.match(newHelp.stdout, /--yes/);
+
+    const invalidPm = runCli(['new', 'bad-pm-proj', '--pm', 'yarm', '--skip-install', '--yes']);
+    assert.equal(invalidPm.status, 1);
+    assert.match(invalidPm.stderr, /\[INVALID_PACKAGE_MANAGER\]/);
+
+    const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'fastlbs-new-pm-'));
+    try {
+        // 1. pnpm project scaffold
+        const pnpmRes = runCli(['new', 'api-pnpm', '--pm', 'pnpm', '--skip-install', '--yes'], {
+            cwd: sandbox,
+        });
+        assert.equal(pnpmRes.status, 0, pnpmRes.stderr);
+
+        const pnpmProj = path.join(sandbox, 'api-pnpm');
+        const pnpmConfig = JSON.parse(fs.readFileSync(path.join(pnpmProj, 'fastlbs.config.json'), 'utf-8'));
+        const pnpmPkg = JSON.parse(fs.readFileSync(path.join(pnpmProj, 'package.json'), 'utf-8'));
+        assert.equal(pnpmConfig.packageManager, 'pnpm');
+        assert.equal(pnpmPkg.workspaces, undefined);
+        const pnpmWorkspaceYaml = fs.readFileSync(path.join(pnpmProj, 'pnpm-workspace.yaml'), 'utf-8');
+        assert.match(pnpmWorkspaceYaml, /allowBuilds:/);
+        assert.match(pnpmWorkspaceYaml, /esbuild: true/);
+        assert.match(pnpmWorkspaceYaml, /serverless: true/);
+        assert.match(fs.readFileSync(path.join(pnpmProj, '.npmrc'), 'utf-8'), /node-linker=hoisted/);
+
+        // 2. npm & yarn scaffolds keep package.json#workspaces
+        const npmRes = runCli(['new', 'api-npm', '--package-manager', 'npm', '--skip-install', '--yes'], {
+            cwd: sandbox,
+        });
+        assert.equal(npmRes.status, 0, npmRes.stderr);
+        const npmPkg = JSON.parse(fs.readFileSync(path.join(sandbox, 'api-npm', 'package.json'), 'utf-8'));
+        assert.deepEqual(npmPkg.workspaces, ['lambdas/*', 'libs/*']);
+
+        const yarnRes = runCli(['new', 'api-yarn', '--pm', 'yarn', '--skip-install', '--yes'], {
+            cwd: sandbox,
+        });
+        assert.equal(yarnRes.status, 0, yarnRes.stderr);
+        const yarnConfig = JSON.parse(fs.readFileSync(path.join(sandbox, 'api-yarn', 'fastlbs.config.json'), 'utf-8'));
+        const yarnPkg = JSON.parse(fs.readFileSync(path.join(sandbox, 'api-yarn', 'package.json'), 'utf-8'));
+        assert.equal(yarnConfig.packageManager, 'yarn');
+        assert.equal(yarnPkg.private, true);
+        assert.deepEqual(yarnPkg.workspaces, ['lambdas/*', 'libs/*']);
+
+        // 3. Non-interactive auto-detection from npm_config_user_agent
+        const uaRes = runCli(['new', 'api-ua', '--skip-install', '--yes'], {
+            cwd: sandbox,
+            env: { ...process.env, npm_config_user_agent: 'pnpm/11.4.0 npm/? node/v22.0.0' },
+        });
+        assert.equal(uaRes.status, 0, uaRes.stderr);
+        const uaConfig = JSON.parse(fs.readFileSync(path.join(sandbox, 'api-ua', 'fastlbs.config.json'), 'utf-8'));
+        assert.equal(uaConfig.packageManager, 'pnpm');
+
+        // 4. Lambda creation, modular build tip, and test hint respect pnpm in api-pnpm
+        const lambdaRes = runCli(
+            ['lambda', 'orders', '--kind', 'http', '--method', 'POST', '--path', '/orders', '--no-i18n', '--yes'],
+            { cwd: pnpmProj }
+        );
+        assert.equal(lambdaRes.status, 0, lambdaRes.stderr);
+        assert.match(lambdaRes.stdout, /Package manager: pnpm/);
+        assert.match(lambdaRes.stdout, /pnpm install/);
+
+        const buildRes = runCli(['build', 'orders', '--type', 'modular'], { cwd: pnpmProj });
+        assert.equal(buildRes.status, 0, buildRes.stderr);
+        assert.match(buildRes.stdout, /pnpm install --prod/);
+
+        const testRes = runCli(['test', 'orders'], { cwd: pnpmProj });
+        assert.equal(testRes.status, 1);
+        assert.match(testRes.stderr, /\[JEST_NOT_INSTALLED\]/);
+        assert.match(testRes.stderr, /pnpm install/);
+    } finally {
+        fs.rmSync(sandbox, { recursive: true, force: true });
+    }
+});
+
+test('upgradeProjectRuntime backfills packageManager from lockfile when missing', async () => {
+    const tempProj = fs.mkdtempSync(path.join(os.tmpdir(), 'fastlbs-upgrade-pm-'));
+    try {
+        fs.mkdirSync(path.join(tempProj, 'libs', 'common'), { recursive: true });
+        fs.writeFileSync(path.join(tempProj, 'yarn.lock'), '# yarn lockfile v1\n', 'utf-8');
+        fs.writeFileSync(
+            path.join(tempProj, 'fastlbs.config.json'),
+            JSON.stringify({ service: 'legacy-app', frameworkVersion: '2', lambdas: {} }, null, 2),
+            'utf-8'
+        );
+
+        const report = await upgradeProjectRuntime({ projectRoot: tempProj });
+        assert.equal(report.packageManager, 'yarn');
+        assert.equal(report.packageManagerUpdated, true);
+
+        const updatedCfg = JSON.parse(fs.readFileSync(path.join(tempProj, 'fastlbs.config.json'), 'utf-8'));
+        assert.equal(updatedCfg.packageManager, 'yarn');
+    } finally {
+        fs.rmSync(tempProj, { recursive: true, force: true });
+    }
 });
 
 

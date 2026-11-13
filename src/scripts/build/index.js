@@ -8,6 +8,11 @@ import { assertPathInsideProject, assertValidLambdaName } from '../../utils/cli_
 import { getProjectRootOrThrow } from '../../utils/project_context.js';
 import { FastlbsError } from '../../utils/cli_error.js';
 import { syncLambdaFunctionConfig, syncAllLambdasConfig } from '../../services/serverless/lambda_config_sync.js';
+import {
+    resolvePackageManager,
+    isProjectYarnBerry,
+    getPackageManagerCommands,
+} from '../../utils/package_manager.js';
 
 const NODE_BUILTINS = new Set([
     ...builtinModules,
@@ -194,12 +199,16 @@ async function buildModularStrategy(entryPoint, outputFile, lambdaName, projectR
     const packageJsonPath = path.join(distDir, 'package.json');
     fs.writeFileSync(packageJsonPath, JSON.stringify(packageJsonContent, null, 2), 'utf-8');
 
+    const packageManager = resolvePackageManager(projectRoot);
+    const yarnBerry = packageManager === 'yarn' && isProjectYarnBerry(projectRoot);
+    const { prodInstall } = getPackageManagerCommands(packageManager, { yarnBerry });
+
     const depCount = Object.keys(dependencies).length;
     console.log(pc.green(`✔ Lambda "${lambdaName}" compiled successfully! [Strategy: Modular with isolated package.json]`));
     console.log(pc.cyan(`  Output:       ${outputFile}`));
     console.log(pc.cyan(`  Package JSON: ${packageJsonPath}`));
     console.log(pc.cyan(`  Dependencies (${depCount}): ${Object.keys(dependencies).join(', ') || 'none'}`));
-    console.log(pc.dim(`  Cold start tip: Run "npm install --omit=dev" in ${distDir} or package into an AWS Lambda Layer to minimize cold starts.`));
+    console.log(pc.dim(`  Cold start tip: Run "${prodInstall}" in ${distDir} or package into an AWS Lambda Layer to minimize cold starts.`));
 }
 
 export async function buildProject(lambdaName, options = {}) {

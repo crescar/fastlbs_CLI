@@ -5,6 +5,7 @@ import { pathToFileURL } from 'url';
 import { transformSync } from 'esbuild';
 import { getProjectRootOrThrow } from '../../utils/project_context.js';
 import { FastlbsError } from '../../utils/cli_error.js';
+import { resolvePackageManager, getPackageManagerCommands } from '../../utils/package_manager.js';
 
 function getJestConfigPath() {
     const projectRoot = getProjectRootOrThrow();
@@ -139,25 +140,28 @@ function getJestExecutablePath(projectRoot) {
     return path.join(projectRoot, 'node_modules', '.bin', jestBinary);
 }
 
-async function ensureJestInstalled(projectRoot) {
+async function ensureJestInstalled(projectRoot, packageManager) {
     const jestExecutablePath = getJestExecutablePath(projectRoot);
     if (!fs.existsSync(jestExecutablePath)) {
+        const { installCommandString } = getPackageManagerCommands(packageManager);
         throw new FastlbsError('Jest is not installed in the project.', {
             code: 'JEST_NOT_INSTALLED',
-            hint: 'Run "npm install" inside the project to install all dependencies.',
+            hint: `Run "${installCommandString}" inside the project to install all dependencies.`,
         });
     }
 }
 
 async function runJest(config) {
     const projectRoot = getProjectRootOrThrow();
-    await ensureJestInstalled(projectRoot);
+    const packageManager = resolvePackageManager(projectRoot);
+    await ensureJestInstalled(projectRoot, packageManager);
 
     const configPath = path.join(projectRoot, '.fastlbs.jest.config.json');
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
 
     try {
-        await runCommand('npx', ['jest', '--config', configPath], { cwd: projectRoot });
+        const [command, args] = getPackageManagerCommands(packageManager).exec('jest', ['--config', configPath]);
+        await runCommand(command, args, { cwd: projectRoot });
     } finally {
         if (fs.existsSync(configPath)) {
             fs.unlinkSync(configPath);

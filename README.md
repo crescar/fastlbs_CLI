@@ -133,6 +133,17 @@ fastlbs new my-enterprise-api
 cd my-enterprise-api
 ```
 
+During interactive setup you can choose your package manager (`npm`, `pnpm`, or `yarn`), or pass it directly via CLI flags:
+
+```bash
+fastlbs new my-enterprise-api --package-manager pnpm
+fastlbs new my-enterprise-api --pm yarn --skip-install --yes
+```
+
+- **`pnpm`**: Generates `pnpm-workspace.yaml` and `.npmrc` (`node-linker=hoisted`) so `node_modules/swagger-ui-dist` and Jest binaries work seamlessly with Serverless packaging.
+- **`yarn` (v2+ / Berry)**: Automatically generates `.yarnrc.yml` (`nodeLinker: node-modules`) for full Serverless, esbuild, and Jest compatibility.
+- The selected package manager is persisted in `fastlbs.config.json` (`packageManager`) and used automatically by `fastlbs lambda`, `fastlbs start`, `fastlbs test`, `fastlbs build`, and `fastlbs upgrade`.
+
 ### 3. Generate an HTTP Lambda
 
 ```bash
@@ -692,7 +703,7 @@ export const CreateOrderBodySchema = z.object({
 
 | Command | Description | Example |
 | :--- | :--- | :--- |
-| `fastlbs new <name>` | Scaffolds a new enterprise TypeScript project | `fastlbs new my-api` |
+| `fastlbs new <name>` | Scaffolds a new enterprise TypeScript project (`--pm`, `--package-manager`, `--skip-install`, `-y, --yes`) | `fastlbs new my-api --pm pnpm` |
 | `fastlbs lambda <name>` | Interactively or via CLI flags (`--kind`, `--method`, `--path`, `--yes`, `--i18n`) generates an HTTP, Authorizer, or Auxiliary Lambda | `fastlbs lambda getUsers -m GET -p users -y` |
 | `fastlbs i18n [name]` | Adds, updates, or validates (`--check`) native i18n translations for a lambda or project | `fastlbs i18n getUsers --locales en,es` |
 | `fastlbs upgrade` | Upgrades `libs/common/` runtime files and per-lambda Serverless packaging in place (`--check`, `--no-backup`) | `fastlbs upgrade` or `fastlbs upgrade --check` |
